@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent } from 'react';
 import { Smartphone, Tablet, Zap } from 'lucide-react';
-import type { EffectParams, ShaderId } from '../../types/voxel';
+import type { EffectParams } from '../../types/voxel';
 import { useVoxel, useVoxelActions, useVoxelStoreRef } from '../../state/useVoxelStore';
-import { ROOM, SHADER_PRESETS } from '../../services/catalog';
+import { ROOM } from '../../services/catalog';
+import { presetById } from '../../services/layers';
 import { runtime } from '../../services/engine';
 import { Segmented } from '../ui/primitives';
 import { t, tk } from '../../i18n';
@@ -11,16 +12,16 @@ type Form = 'tablet' | 'phone';
 
 interface LivePreset {
   name: string;
-  shader: ShaderId;
+  preset: string;
   params: Pick<EffectParams, 'radius' | 'speed' | 'hueShift'>;
   color: string;
 }
 
 const PRESETS: LivePreset[] = [
-  { name: tk('Pulse'), shader: 'spherical_wave', params: { radius: 1.4, speed: 1, hueShift: 0 }, color: '#06B6D4' },
-  { name: tk('Plasma'), shader: 'perlin_plasma', params: { radius: 1.8, speed: 0.8, hueShift: 0.3 }, color: '#D946EF' },
-  { name: tk('Laser'), shader: 'laser_plane', params: { radius: 1, speed: 1.6, hueShift: 0 }, color: '#10B981' },
-  { name: tk('Ambient'), shader: 'height_spectrum', params: { radius: 1.2, speed: 0.35, hueShift: 0.55 }, color: '#F59E0B' },
+  { name: tk('Pulse'), preset: 'sphere', params: { radius: 1.4, speed: 1, hueShift: 0 }, color: '#06B6D4' },
+  { name: tk('Plasma'), preset: 'plasma', params: { radius: 1.8, speed: 0.8, hueShift: 0.3 }, color: '#D946EF' },
+  { name: tk('Laser'), preset: 'laser', params: { radius: 1, speed: 1.6, hueShift: 0 }, color: '#10B981' },
+  { name: tk('Ambient'), preset: 'height', params: { radius: 1.2, speed: 0.35, hueShift: 0.55 }, color: '#F59E0B' },
 ];
 
 const HALF_W = ROOM.width / 2;
@@ -239,19 +240,20 @@ function TapButton() {
   );
 }
 
+/** Scene pads drive the bottom layer of the stack. */
 function PresetGrid() {
-  const shader = useVoxel((s) => s.shader);
-  const { setShader, setParams } = useVoxelActions();
+  const base = useVoxel((s) => s.layers[0] ?? null);
+  const { loadPreset, setParams } = useVoxelActions();
   return (
     <div className="grid grid-cols-2 gap-2">
       {PRESETS.map((p) => {
-        const on = p.shader === shader;
+        const on = !!base && presetById(p.preset)?.code === base.code;
         return (
           <button
             key={p.name}
             type="button"
             onClick={() => {
-              setShader(p.shader);
+              if (base) loadPreset(base.id, p.preset);
               setParams(p.params);
             }}
             className="flex h-14 flex-col items-start justify-center rounded-xl border bg-inset px-3 text-left transition-colors"
@@ -260,7 +262,7 @@ function PresetGrid() {
             <span className="text-[12px] font-medium" style={{ color: on ? p.color : '#e4e4e7' }}>
               {t(p.name)}
             </span>
-            <span className="font-mono text-[9px] text-zinc-500">{t(SHADER_PRESETS.find((s) => s.id === p.shader)?.short ?? '')}</span>
+            <span className="font-mono text-[9px] text-zinc-500">{presetById(p.preset)?.short}</span>
           </button>
         );
       })}

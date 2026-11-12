@@ -64,6 +64,8 @@ export interface ESP32Device {
 }
 
 export type ModTarget = 'sphere_radius' | 'shader_speed' | 'color_shift' | 'strobe_override' | 'master_brightness' | 'origin_y' | 'local_intensity' | 'local_wave';
+/** A scene-wide target, or a layer input: `layer:<layer id>:@opacity` or `layer:<layer id>:<uniform name>`. */
+export type RouteTarget = ModTarget | `layer:${string}`;
 
 /** Position of a node in the modulation editor, in graph units. Keyed by sensor or generator id. */
 export interface NodePos {
@@ -78,7 +80,7 @@ export interface ModulationRoute {
   id: string;
   /** Sensor channel key, `${sensorId}.${channelId}`. */
   source: ChannelKey;
-  target: ModTarget;
+  target: RouteTarget;
   curve: CurveType;
   /** Bipolar depth, -1..+1. */
   amount: number;
@@ -194,13 +196,24 @@ export interface SensorChannel {
   max: number;
 }
 
-export type ShaderId = 'spherical_wave' | 'perlin_plasma' | 'laser_plane' | 'height_spectrum';
+export type BlendMode = 'normal' | 'add' | 'screen' | 'max' | 'multiply';
 
-export interface ShaderPreset {
-  id: ShaderId;
-  label: string;
-  short: string;
-  description: string;
+/** One GPU shader in the effect stack. Layers render bottom (index 0) to top. */
+export interface EffectLayer {
+  id: string;
+  name: string;
+  enabled: boolean;
+  /** GLSL ES 3.00 defining `vec3 shade(vec3 p)`; `uniform float` and `uniform vec3` lines become parameters. */
+  code: string;
+  blend: BlendMode;
+  /** 0..1 */
+  opacity: number;
+  /** Strip ids the layer draws on; empty means every segment. */
+  mask: string[];
+  /** Values of the shader's float parameters by uniform name; missing ones use the declared default. */
+  params: Record<string, number>;
+  /** Values of the shader's color parameters (#rrggbb) by uniform name. */
+  colors: Record<string, string>;
 }
 
 export type PaletteId = 'spectrum' | 'fire' | 'ocean' | 'forest' | 'sunset' | 'ice';
@@ -215,7 +228,7 @@ export interface EffectParams {
   masterBrightness: number;
   /** Color gradient the shaders index; 'spectrum' is the full HSV wheel. */
   palette: PaletteId;
-  /** Crossfade duration when switching shaders, seconds (0 = cut). */
+  /** Crossfade duration when a layer's shader changes, seconds (0 = cut). */
   fadeSec: number;
   bpm: number;
   /** When on, shader speed follows the tempo (120 BPM = 1x). */

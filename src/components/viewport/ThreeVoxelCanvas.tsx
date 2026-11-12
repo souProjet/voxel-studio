@@ -3,7 +3,8 @@ import * as THREE from 'three';
 import { Box, Focus, Globe } from 'lucide-react';
 import { useVoxel, useVoxelActions, useVoxelStoreRef } from '../../state/useVoxelStore';
 import type { SensorNode, Vec3 } from '../../types/voxel';
-import { KIND_META, MAX_LEDS, ROOM, SHADER_PRESETS } from '../../services/catalog';
+import { KIND_META, MAX_LEDS, ROOM } from '../../services/catalog';
+import { PRESETS } from '../../services/layers';
 import { runtime } from '../../services/engine';
 import { sensorChannels } from '../../services/sensors';
 import { t } from '../../i18n';
@@ -473,20 +474,25 @@ export function ThreeVoxelCanvas() {
   );
 }
 
+/** Loads a preset into the selected layer (crossfaded). */
 function ShaderPill() {
-  const shader = useVoxel((s) => s.shader);
-  const { setShader } = useVoxelActions();
+  const layer = useVoxel((s) => s.layers.find((l) => l.id === s.selectedLayerId) ?? null);
+  const { loadPreset } = useVoxelActions();
+  if (!layer) return null;
   return (
-    <div className="absolute left-1/2 top-3 flex -translate-x-1/2 items-center gap-0.5 rounded-full border border-line bg-panel/90 p-0.5 backdrop-blur">
-      {SHADER_PRESETS.map((p, i) => {
-        const on = p.id === shader;
+    <div className="absolute left-1/2 top-3 flex max-w-[calc(100%-320px)] -translate-x-1/2 items-center gap-0.5 overflow-x-auto rounded-full border border-line bg-panel/90 p-0.5 backdrop-blur">
+      <span className="max-w-[90px] shrink-0 truncate pl-2.5 pr-1 font-mono text-[10px] text-zinc-500" title={t('Selected layer')}>
+        {layer.name}
+      </span>
+      {PRESETS.map((p, i) => {
+        const on = p.code === layer.code;
         return (
           <button
             key={p.id}
             type="button"
             title={t(p.description)}
-            onClick={() => setShader(p.id)}
-            className={`flex h-6 items-center gap-1.5 rounded-full px-3 font-mono text-[10px] tracking-wider transition-colors ${
+            onClick={() => loadPreset(layer.id, p.id)}
+            className={`flex h-6 shrink-0 items-center gap-1.5 rounded-full px-2.5 font-mono text-[10px] tracking-wider transition-colors ${
               on ? 'bg-spatial/15 text-spatial' : 'text-zinc-500 hover:text-zinc-200'
             }`}
           >

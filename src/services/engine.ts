@@ -1,8 +1,10 @@
-import type { DeviceRuntimeStats, EngineStats, Falloff, LEDStrip, ResolvedParams, ShaderId } from '../types/voxel';
+import type { DeviceRuntimeStats, EngineStats, Falloff, LEDStrip, ResolvedParams, Vec3 } from '../types/voxel';
 import type { VoxelStore } from '../state/useVoxelStore';
-import { CHIPSETS, DDP_SEND_HZ, EFFECT_DEFAULTS, LIMITER_RATIO, MAX_LEDS, TARGET_META } from './catalog';
+import { CHIPSETS, DDP_SEND_HZ, EFFECT_DEFAULTS, isSpatialTarget, LIMITER_RATIO, MAX_LEDS, ROOM, TARGET_META } from './catalog';
 import { buildLayout, COLOR_ORDER_INDEX, type LedLayout } from './geometry';
-import { clamp, falloffWeight, grayBit, resolveParams, routeOutput, shadeInto, strobeLevel, type ChannelValues, type ModSums, type RouteOutputs } from './shaderMath';
+import { clamp, falloffWeight, grayBit, resolveParams, routeOutput, strobeLevel, type ChannelValues, type ModSums, type RouteOutputs } from './shaderMath';
+import { LayerRenderer, type LayerDraw } from './layerRenderer';
+import { hexToRgb, layerTarget, OPACITY_KEY, parseParams } from './layers';
 import { GeneratorBank } from './generators';
 import { inputs, syncInputs } from './inputs';
 import { SensorPipeline, sensorIdOf } from './sensors';
@@ -34,6 +36,8 @@ export const runtime = {
   routeOutputs: {} as RouteOutputs,
   time: 0,
   phase: 0,
+  /** Beats elapsed at the scene tempo. */
+  beat: 0,
   frames: new Map<string, DeviceFrame>(),
 };
 
@@ -82,10 +86,15 @@ export function startEngine(store: VoxelStore): () => void {
   let lastRafAt = 0;
   let lastStrips: LEDStrip[] | null = null;
   const generators = new GeneratorBank();
-  let curShader: ShaderId | null = null;
-  let fromShader: ShaderId | null = null;
-  let fadeStart = 0;
-  const fadeRgb = new Float32Array(3);
+  let renderer: LayerRenderer | null = null;
+  try {
+    renderer = new LayerRenderer();
+  } catch (e) {
+    store.setState({ notice: { id: Date.now(), text: `GPU: ${e instanceof Error ? e.message : String(e)}`, tone: 'error' } });
+  }
+  let rendererLayout = -1;
+  let publishedErrors = '{}';
+  const room: Vec3 = [ROOM.width, ROOM.height, ROOM.depth];
   let lastSend = 0;
   let lastStats = performance.now();
   let renderFrames = 0;
@@ -123,22 +132,69 @@ export function startEngine(store: VoxelStore): () => void {
       outs[r.id] = prev === undefined || r.smoothMs <= 0 ? raw : prev + (raw - prev) * (1 - Math.exp((-dt * 1000) / r.smoothMs));
     }
     runtime.routeOutputs = outs;
-    const { params, mods } = resolveParams(s.params, s.routes, outs, s.manualStrobe);
+    const { params, mods, layerMods } = resolveParams(s.params, s.routes, outs, s.manualStrobe);
     runtime.params = params;
     runtime.mods = mods;
     runtime.time += dt;
     runtime.phase += dt * params.speed;
+    runtime.beat += (dt * params.bpm) / 60;
 
-    // Shader crossfade: the outgoing shader keeps rendering until the fade completes.
-    if (curShader === null) curShader = s.shader;
-    if (s.shader !== curShader) {
-      fromShader = curShader;
-      curShader = s.shader;
-      fadeStart = runtime.time;
+    // 0. Layer stack on the GPU: base color of every LED, before spatial fields and gain.
+    if (renderer) {
+      if (rendererLayout !== runtime.layoutVersion) {
+        renderer.setLayout(layout);
+        rendererLayout = runtime.layoutVersion;
+      }
+      const stripIndex = new Map(layout.ranges.map((r, i) => [r.stripId, i]));
+      const draws: LayerDraw[] = [];
+      for (const l of s.layers) {
+        if (!l.enabled) continue;
+        const mod = (key: string) => layerMods[layerTarget(l.id, key)] ?? 0;
+        const floats: Record<string, number> = {};
+        const tints: Record<string, [number, number, number]> = {};
+        for (const p of parseParams(l.code)) {
+          if (p.kind === 'float') floats[p.name] = clamp((l.params[p.name] ?? p.value) + mod(p.name) * (p.max - p.min), p.min, p.max);
+          else tints[p.name] = hexToRgb(l.colors[p.name] ?? p.value);
+        }
+        let mask: Uint8Array | null = null;
+        if (l.mask.length) {
+          mask = new Uint8Array(Math.max(1, layout.ranges.length));
+          for (const id of l.mask) {
+            const i = stripIndex.get(id);
+            if (i !== undefined) mask[i] = 255;
+          }
+        }
+        draws.push({ id: l.id, code: l.code, blend: l.blend, opacity: clamp(l.opacity + mod(OPACITY_KEY)), mask, floats, colors: tints });
+      }
+      renderer.render(
+        draws,
+        {
+          time: runtime.time,
+          phase: runtime.phase,
+          beat: runtime.beat,
+          bpm: params.bpm,
+          radius: params.radius,
+          hue: params.hueShift,
+          origin: params.origin,
+          room,
+          palette: params.palette,
+          fadeSec: params.fadeSec,
+        },
+        colors,
+      );
+      const errors: Record<string, string> = {};
+      for (const l of s.layers) {
+        const e = renderer.errors.get(l.code);
+        if (e) errors[l.id] = e;
+      }
+      const key = JSON.stringify(errors);
+      if (key !== publishedErrors) {
+        publishedErrors = key;
+        store.setState({ shaderErrors: errors });
+      }
+    } else {
+      colors.fill(0);
     }
-    const fadeK = fromShader && params.fadeSec > 0 ? clamp((runtime.time - fadeStart) / params.fadeSec) : 1;
-    if (fadeK >= 1) fromShader = null;
-    const fade = fromShader;
 
     const strobe = params.strobe ? strobeLevel(runtime.time) : -1;
     const gain = params.masterBrightness;
@@ -147,7 +203,7 @@ export function startEngine(store: VoxelStore): () => void {
     // Spatial fields: routes to local_* targets, centered on their source sensor.
     const fields: SpatialField[] = [];
     for (const r of s.routes) {
-      if (!r.enabled || !TARGET_META[r.target].spatial) continue;
+      if (!r.enabled || !isSpatialTarget(r.target)) continue;
       const sensor = s.sensors.find((x) => x.id === sensorIdOf(r.source));
       if (!sensor || !sensor.enabled) continue;
       const v = outs[r.id] ?? 0;
@@ -185,13 +241,6 @@ export function startEngine(store: VoxelStore): () => void {
           const x = pos[k],
             y = pos[k + 1],
             z = pos[k + 2];
-          shadeInto(colors, k, s.shader, x, y, z, runtime.phase, params);
-          if (fade) {
-            shadeInto(fadeRgb, 0, fade, x, y, z, runtime.phase, params);
-            colors[k] = fadeRgb[0] + (colors[k] - fadeRgb[0]) * fadeK;
-            colors[k + 1] = fadeRgb[1] + (colors[k + 1] - fadeRgb[1]) * fadeK;
-            colors[k + 2] = fadeRgb[2] + (colors[k + 2] - fadeRgb[2]) * fadeK;
-          }
           let mul = 1;
           let add = 0;
           for (const f of fields) {
@@ -429,6 +478,7 @@ export function startEngine(store: VoxelStore): () => void {
 
   return () => {
     cancelAnimationFrame(raf);
+    renderer?.dispose();
     clock.terminate();
     URL.revokeObjectURL(clockUrl);
     window.clearInterval(probeTimer);

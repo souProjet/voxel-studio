@@ -3,6 +3,7 @@ import { useVoxel } from '../../state/useVoxelStore';
 import { InspectorSidebar } from './InspectorSidebar';
 import { SceneTreeSidebar } from './SceneTreeSidebar';
 import { ThreeVoxelCanvas } from './ThreeVoxelCanvas';
+import { ShaderEditor } from './ShaderEditor';
 
 function StatusBar() {
   const origin = useVoxel((s) => s.params.origin);
@@ -36,8 +37,9 @@ export function StudioView() {
   return (
     <div className="flex min-h-0 min-w-0 flex-1">
       <SceneTreeSidebar />
-      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+      <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
         <ThreeVoxelCanvas />
+        <ShaderEditor />
         <StatusBar />
       </main>
       <InspectorSidebar />

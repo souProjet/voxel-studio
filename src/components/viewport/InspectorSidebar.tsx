@@ -2,12 +2,13 @@ import { ArrowDown, ArrowUp, Copy, Crosshair, Flashlight, Minus, Plus, SlidersHo
 import type { Axis, ColorOrder, Falloff, PaletteId, LEDStrip, LedChipset, SensorNode, SensorSourceId, StripShape, Vec3 } from '../../types/voxel';
 import { useVoxel, useVoxelActions } from '../../state/useVoxelStore';
 import { useDeleteCommands } from '../../state/useDeleteCommands';
-import { CHIPSETS, KIND_META, PALETTES, SCENARIOS, SHADER_PRESETS, TARGET_META } from '../../services/catalog';
+import { CHIPSETS, isSpatialTarget, KIND_META, PALETTES, SCENARIOS, TARGET_META } from '../../services/catalog';
 import { activeCount, polylineVertices, stripLength } from '../../services/geometry';
 import { denormalize, manualDefault, oscAddressOf, SENSOR_SOURCES, sensorChannels, sensorIdOf, sourceStatus } from '../../services/sensors';
 import { ScrubInput } from '../ui/ScrubInput';
 import { Field, IconButton, SectionHeader, Segmented, Select, TextInput, Toggle } from '../ui/primitives';
 import { KIND_ICON } from '../ui/sensorIcons';
+import { LayersPanel } from './LayersPanel';
 import { t, tk } from '../../i18n';
 
 function Vec3Input({ value, onChange, min = -10, max = 10 }: { value: Vec3; onChange: (v: Vec3) => void; min?: number; max?: number }) {
@@ -30,16 +31,14 @@ const paletteCss = (id: PaletteId) =>
 
 function EffectSection() {
   const params = useVoxel((s) => s.params);
-  const shader = useVoxel((s) => s.shader);
   const stats = useVoxel((s) => s.stats);
   const { setParams, setOriginAxis, tapTempo } = useVoxelActions();
-  const preset = SHADER_PRESETS.find((p) => p.id === shader)!;
 
   return (
     <>
-      <SectionHeader title={t('Effect')} icon={Crosshair} right={<span className="font-mono text-[10px] text-spatial">{t(preset.short)}</span>} />
+      <SectionHeader title={t('Scene')} icon={Crosshair} />
       <div className="flex flex-col gap-1.5 p-3">
-        <p className="text-[11px] leading-snug text-zinc-500">{t(preset.description)}</p>
+        <p className="text-[11px] leading-snug text-zinc-500">{t('Shared by every layer: ORIGIN, RADIUS, PHASE (speed), the palette and its hue shift.')}</p>
         <div className="mt-1 text-[10px] uppercase tracking-wider text-zinc-500">{t('Origin')}</div>
         <div className="grid grid-cols-3 gap-1">
           <ScrubInput axis="x" label="X" value={params.origin[0]} onChange={(v) => setOriginAxis(0, v)} min={-3.5} max={3.5} step={0.01} unit="m" />
@@ -470,7 +469,7 @@ function SensorSection({ sensor }: { sensor: SensorNode }) {
   const source = SENSOR_SOURCES[sensor.source];
   const sources = Object.values(SENSOR_SOURCES).filter((x) => x.kinds.includes(sensor.kind));
   const channels = sensorChannels(sensor);
-  const spatialRoutes = routes.filter((r) => sensorIdOf(r.source) === sensor.id && TARGET_META[r.target].spatial).length;
+  const spatialRoutes = routes.filter((r) => sensorIdOf(r.source) === sensor.id && isSpatialTarget(r.target)).length;
   const isSim = sensor.source === 'sim';
   const manual = sensor.sim.mode === 'manual' || sensor.kind === 'gpio';
   const scenarios = SCENARIOS[sensor.kind];
@@ -712,7 +711,10 @@ export function InspectorSidebar() {
   const sensor = useVoxel((s) => s.sensors.find((x) => x.id === s.selectedSensorId) ?? null);
   return (
     <aside className="flex w-[296px] shrink-0 flex-col overflow-y-auto border-l border-line bg-panel">
-      <EffectSection />
+      <LayersPanel />
+      <div className="border-t border-line">
+        <EffectSection />
+      </div>
       <div className="border-t border-line">
         {sensor ? (
           <SensorSection sensor={sensor} />

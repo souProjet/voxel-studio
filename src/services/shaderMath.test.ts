@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { EffectParams, ModulationRoute } from '../types/voxel';
 import { EFFECT_DEFAULTS } from './catalog';
 import { ROUTE_DEFAULTS } from './generators';
-import { colorInto, curveValue, falloffWeight, grayBit, grayDecode, resolveParams, routeOutput, routeTransfer, shapeRouteInput } from './shaderMath';
+import { curveValue, paletteLut, falloffWeight, grayBit, grayDecode, resolveParams, routeOutput, routeTransfer, shapeRouteInput } from './shaderMath';
 
 const route = (p: Partial<ModulationRoute> = {}): ModulationRoute => ({
   id: 'r',
@@ -58,16 +58,13 @@ describe('modulation math', () => {
 });
 
 describe('color and helpers', () => {
-  it('palettes differ from the spectrum and respect value', () => {
-    const a = [0, 0, 0],
-      b = [0, 0, 0],
-      c = [0, 0, 0];
-    colorInto(a, 0, 0.6, 1, 1, 'spectrum');
-    colorInto(b, 0, 0.6, 1, 1, 'fire');
-    colorInto(c, 0, 0.6, 1, 0, 'fire');
-    expect(b).not.toEqual(a);
-    expect(b[0]).toBeGreaterThan(b[2]); // fire is warm
-    expect(c).toEqual([0, 0, 0]);
+  it('palette lookups are distinct, warm for fire, and cached', () => {
+    const spectrum = paletteLut('spectrum');
+    const fire = paletteLut('fire');
+    expect(spectrum).toHaveLength(256 * 3);
+    expect(Array.from(fire.subarray(150, 153))).not.toEqual(Array.from(spectrum.subarray(150, 153)));
+    expect(fire[150]).toBeGreaterThan(fire[152]); // fire is warm
+    expect(paletteLut('fire')).toBe(fire);
   });
 
   it('Gray code decodes back to the index', () => {

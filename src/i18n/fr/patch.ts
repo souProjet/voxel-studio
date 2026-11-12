@@ -12,7 +12,10 @@ const patch: Record<string, string> = {
   'Drag from an output to an input to connect · Drag a chip up or down for the amount · Scroll to pan, pinch or Cmd+scroll to zoom · Delete removes the selection':
     'Glisser d’une sortie vers une entrée pour connecter · Glisser une pastille vers le haut ou le bas pour la quantité · Défiler pour se déplacer, pincer ou Cmd+défiler pour zoomer · Suppr efface la sélection',
   Inspector: 'Inspecteur',
-  'Select a wire to shape its response, or a generator to edit it.': 'Sélectionner un câble pour régler sa réponse, ou un générateur pour le modifier.',
+  'Select a wire to shape its response, or a generator or a layer to edit it.': 'Sélectionner un câble pour régler sa réponse, ou un générateur ou un calque pour le modifier.',
+  'Missing target': 'Destination manquante',
+  Layer: 'Calque',
+  'Shared by every layer': 'Commun à tous les calques',
   'Hide the matrix': 'Masquer la matrice',
   'Show the matrix': 'Afficher la matrice',
   'IN 1.0': 'ENTRÉE 1.0',

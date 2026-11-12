@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
-import { Maximize2, Minus, Plus, Sparkles, X, type LucideIcon } from 'lucide-react';
-import type { ChannelKey, Generator, GeneratorKind, ModTarget, ModulationRoute, NodePos, PatchLayout, SensorNode } from '../../types/voxel';
+import { Layers, Maximize2, Minus, Plus, Sparkles, X, type LucideIcon } from 'lucide-react';
+import type { ChannelKey, EffectLayer, Generator, GeneratorKind, ModulationRoute, NodePos, PatchLayout, RouteTarget, SensorNode } from '../../types/voxel';
 import { useVoxel, useVoxelActions } from '../../state/useVoxelStore';
 import { useDeleteCommands } from '../../state/useDeleteCommands';
-import { KIND_META, SHADER_PRESETS, TARGET_META } from '../../services/catalog';
+import { KIND_META, TARGET_META } from '../../services/catalog';
+import { layerInputs, OPACITY_KEY } from '../../services/layers';
 import { clamp, routeOutput } from '../../services/shaderMath';
 import { sensorIdOf } from '../../services/sensors';
 import { GENERATOR_META } from '../../services/generators';
@@ -23,7 +24,7 @@ const SNAP_PX = 24;
 const EXTRA: Record<GeneratorKind, number> = { lfo: 46, envelope: 46, osc: 46, midi: 46, macro: 32 };
 const GEN_KINDS = Object.keys(GENERATOR_META) as GeneratorKind[];
 
-/** An output port carries a channel key; an input port is `target:<ModTarget>` or `trigger:<generator id>`. */
+/** An output port carries a channel key; an input port is `target:<RouteTarget>` or `trigger:<generator id>`. */
 interface Row {
   key: string;
   dir: 'out' | 'in';
@@ -41,13 +42,15 @@ interface NodeModel {
   extra: number;
   gen?: Generator;
   dim?: boolean;
+  /** Scene and layer nodes: they receive routes and sit in the right column. */
+  sink?: boolean;
 }
 interface View {
   x: number;
   y: number;
   k: number;
 }
-type Snap = { kind: 'target'; target: ModTarget; at: NodePos } | { kind: 'trigger'; gen: string; at: NodePos } | { kind: 'amount'; route: string; at: NodePos };
+type Snap = { kind: 'target'; target: RouteTarget; at: NodePos } | { kind: 'trigger'; gen: string; at: NodePos } | { kind: 'amount'; route: string; at: NodePos };
 type Drag =
   | { kind: 'pan'; sx: number; sy: number; vx: number; vy: number; moved: boolean }
   | { kind: 'node'; id: string; ox: number; oy: number; at: NodePos; moved: boolean }
@@ -69,7 +72,9 @@ const wireMid = (a: NodePos, b: NodePos): NodePos => {
 };
 const snapGrid = (v: number) => Math.round(v / GRID) * GRID;
 
-function buildNodes(patch: Patch, sensors: SensorNode[], generators: Generator[], shaderLabel: string): NodeModel[] {
+const BLEND_TAG = { normal: 'NORM', add: 'ADD', screen: 'SCRN', max: 'MAX', multiply: 'MULT' } as const;
+
+function buildNodes(patch: Patch, sensors: SensorNode[], generators: Generator[], layers: EffectLayer[]): NodeModel[] {
   const nodes: NodeModel[] = sensors.map((s) => ({
     id: s.id,
     title: s.name,
@@ -93,34 +98,46 @@ function buildNodes(patch: Patch, sensors: SensorNode[], generators: Generator[]
   }
   nodes.push({
     id: EFFECT,
-    title: t('Effect'),
-    subtitle: shaderLabel,
+    title: t('Scene'),
+    subtitle: t('Shared by every layer'),
     color: '#06b6d4',
     Icon: Sparkles,
     rows: TARGETS.map((tg) => ({ key: `target:${tg}`, dir: 'in', label: t(TARGET_META[tg].label), detail: t(TARGET_META[tg].detail), spatial: TARGET_META[tg].spatial })),
     extra: 0,
+    sink: true,
   });
+  // Top layer first, as in the layer list.
+  for (const l of [...layers].reverse()) {
+    nodes.push({
+      id: l.id,
+      title: l.name,
+      subtitle: `${t('Layer')} · ${BLEND_TAG[l.blend]} · ${Math.round(l.opacity * 100)}%`,
+      color: '#a78bfa',
+      Icon: Layers,
+      rows: layerInputs(l).map((x) => ({ key: `target:${x.target}`, dir: 'in', label: x.key === OPACITY_KEY ? t('Opacity') : x.key })),
+      extra: 0,
+      dim: !l.enabled,
+      sink: true,
+    });
+  }
   return nodes;
 }
 
-/** Saved positions win; new nodes stack under the sources, the effect node sits to their right. */
+/** Saved positions win; new sources stack in the left column, the scene and layers in the right one. */
 function resolveLayout(nodes: NodeModel[], saved: PatchLayout): Map<string, NodePos> {
   const pos = new Map<string, NodePos>();
-  let bottom = -24;
+  const bottom = { src: -24, sink: -24 };
+  const col = (n: NodeModel) => (n.sink ? 'sink' : 'src');
   for (const n of nodes) {
     const p = saved[n.id];
     if (!p) continue;
     pos.set(n.id, p);
-    if (n.id !== EFFECT) bottom = Math.max(bottom, p.y + nodeHeight(n));
+    bottom[col(n)] = Math.max(bottom[col(n)], p.y + nodeHeight(n));
   }
   for (const n of nodes) {
     if (pos.has(n.id)) continue;
-    if (n.id === EFFECT) {
-      pos.set(n.id, { x: NODE_W + 380, y: 0 });
-      continue;
-    }
-    pos.set(n.id, { x: 0, y: bottom + 24 });
-    bottom += 24 + nodeHeight(n);
+    pos.set(n.id, { x: n.sink ? NODE_W + 380 : 0, y: bottom[col(n)] + 24 });
+    bottom[col(n)] += 24 + nodeHeight(n);
   }
   return pos;
 }
@@ -188,7 +205,7 @@ function NodeCard({
   dragging: boolean;
   connected: Set<string>;
   snapKey: string | null;
-  sums: Partial<Record<ModTarget, number>>;
+  sums: Record<string, number>;
 }) {
   const { setMacro } = useVoxelActions();
   const g = n.gen;
@@ -234,7 +251,7 @@ function NodeCard({
             </div>
           );
         }
-        const target = r.key.startsWith('target:') ? (r.key.slice(7) as ModTarget) : null;
+        const target = r.key.startsWith('target:') ? r.key.slice(7) : null;
         const sum = target ? (sums[target] ?? 0) : 0;
         const live = Math.abs(sum) > 0.005;
         return (
@@ -257,7 +274,7 @@ function NodeCard({
                 </span>
               </>
             )}
-            <Port dir="in" color={target ? '#06b6d4' : n.color} value={target ? Math.abs(sum) : 0} active={connected.has(r.key)} snapped={snapKey === r.key} />
+            <Port dir="in" color={n.color} value={target ? Math.abs(sum) : 0} active={connected.has(r.key)} snapped={snapKey === r.key} />
           </div>
         );
       })}
@@ -292,8 +309,8 @@ export function NodeEditor({
   const sensors = useVoxel((s) => s.sensors);
   const generators = useVoxel((s) => s.generators);
   const layout = useVoxel((s) => s.patchLayout);
-  const shader = useVoxel((s) => s.shader);
-  const { addRoute, updateRoute, removeRoute, updateGenerator, addGenerator, moveNodes } = useVoxelActions();
+  const layers = useVoxel((s) => s.layers);
+  const { addRoute, updateRoute, removeRoute, updateGenerator, addGenerator, moveNodes, removeLayer } = useVoxelActions();
   const del = useDeleteCommands();
   const rootRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<View>(() => savedView ?? { x: 40, y: 40, k: 1 });
@@ -307,8 +324,7 @@ export function NodeEditor({
   };
   const lastChip = useRef({ id: '', at: 0 });
 
-  const shaderLabel = t(SHADER_PRESETS.find((p) => p.id === shader)?.label ?? '');
-  const nodes = buildNodes(patch, sensors, generators, shaderLabel);
+  const nodes = buildNodes(patch, sensors, generators, layers);
   const pos = resolveLayout(nodes, layout);
   if (drag?.kind === 'node') pos.set(drag.id, drag.at);
 
@@ -318,7 +334,7 @@ export function NodeEditor({
     const p = pos.get(n.id)!;
     n.rows.forEach((r, i) => ports.set(r.key, { x: r.dir === 'out' ? p.x + NODE_W : p.x, y: p.y + HEAD + i * ROW + ROW / 2, color: n.color }));
   }
-  const sums: Partial<Record<ModTarget, number>> = {};
+  const sums: Record<string, number> = {};
   const connected = new Set<string>();
   const wires = routes.flatMap((r) => {
     const a = ports.get(r.source);
@@ -398,6 +414,7 @@ export function NodeEditor({
     delRef.current = () => {
       if (selectedRouteId) removeRoute(selectedRouteId);
       else if (selectedNodeId && generators.some((g) => g.id === selectedNodeId)) void del.generator(selectedNodeId);
+      else if (selectedNodeId && layers.some((l) => l.id === selectedNodeId)) removeLayer(selectedNodeId);
     };
   });
   useEffect(() => {
@@ -430,7 +447,7 @@ export function NodeEditor({
         best = s;
       }
     };
-    if (!reroute?.trigger) for (const tg of TARGETS) consider({ kind: 'target', target: tg, at: ports.get(`target:${tg}`)! });
+    if (!reroute?.trigger) for (const [key, at] of ports) if (key.startsWith('target:')) consider({ kind: 'target', target: key.slice(7) as RouteTarget, at });
     if (!reroute?.route)
       for (const g of generators) if (g.kind === 'envelope' && g.id !== sensorIdOf(from)) consider({ kind: 'trigger', gen: g.id, at: ports.get(`trigger:${g.id}`)! });
     if (!reroute) for (const w of wires) if (w.r.source !== from) consider({ kind: 'amount', route: w.r.id, at: w.mid });

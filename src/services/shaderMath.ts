@@ -1,7 +1,5 @@
-import type { CurveType, EffectParams, Falloff, ModTarget, ModulationRoute, PaletteId, ResolvedParams, ShaderId } from '../types/voxel';
-import { PALETTES, ROOM, TARGET_META } from './catalog';
-
-const TAU = Math.PI * 2;
+import type { CurveType, EffectParams, Falloff, ModTarget, ModulationRoute, PaletteId, ResolvedParams } from '../types/voxel';
+import { PALETTES, TARGET_META } from './catalog';
 
 export const clamp = (v: number, lo = 0, hi = 1) => (v < lo ? lo : v > hi ? hi : v);
 const fract = (v: number) => v - Math.floor(v);
@@ -57,103 +55,28 @@ export function hsvInto(out: Float32Array | number[], o: number, h: number, s: n
 /* ------------------------------------------------------------------ */
 
 const LUT_SIZE = 256;
+const luts = new Map<PaletteId, Float32Array>();
 
-/** 256-entry RGB lookup per gradient palette, built once. */
-const PALETTE_LUT = Object.fromEntries(
-  Object.entries(PALETTES).map(([id, { stops }]) => {
-    const lut = new Float32Array(LUT_SIZE * 3);
+/** 256-entry RGB lookup of a palette (built once), sampled by the layer shaders' palette(). */
+export function paletteLut(id: PaletteId): Float32Array {
+  const hit = luts.get(id);
+  if (hit) return hit;
+  const lut = new Float32Array(LUT_SIZE * 3);
+  const stops = PALETTES[id].stops;
+  if (stops.length < 2) {
+    for (let i = 0; i < LUT_SIZE; i++) hsvInto(lut, i * 3, i / LUT_SIZE, 1, 1);
+  } else {
     const rgb = stops.map(([, hex]) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255));
-    for (let i = 0; i < LUT_SIZE && stops.length > 1; i++) {
+    for (let i = 0; i < LUT_SIZE; i++) {
       const t = i / LUT_SIZE;
       let k = 0;
       while (k < stops.length - 2 && stops[k + 1][0] <= t) k++;
       const f = (t - stops[k][0]) / (stops[k + 1][0] - stops[k][0] || 1);
       for (let c = 0; c < 3; c++) lut[i * 3 + c] = rgb[k][c] + (rgb[k + 1][c] - rgb[k][c]) * f;
     }
-    return [id, lut];
-  }),
-) as Record<PaletteId, Float32Array>;
-
-/** Palette color at position h (wraps), desaturated toward white by s, scaled by v. */
-export function colorInto(out: Float32Array | number[], o: number, h: number, s: number, v: number, palette: PaletteId): void {
-  if (palette === 'spectrum') return hsvInto(out, o, h, s, v);
-  const lut = PALETTE_LUT[palette];
-  const i = Math.floor(fract(h) * LUT_SIZE) * 3;
-  const w = 1 - s;
-  out[o] = (lut[i] * s + w) * v;
-  out[o + 1] = (lut[i + 1] * s + w) * v;
-  out[o + 2] = (lut[i + 2] * s + w) * v;
-}
-
-/* ------------------------------------------------------------------ */
-/* Volumetric shaders: f(x, y, z, t, params) -> RGB in 0..1            */
-/* `t` is the speed-integrated phase, so speed changes never jump.     */
-/* ------------------------------------------------------------------ */
-
-function sphericalWave(out: Float32Array | number[], o: number, x: number, y: number, z: number, t: number, p: ResolvedParams) {
-  const dx = x - p.origin[0];
-  const dy = y - p.origin[1];
-  const dz = z - p.origin[2];
-  const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-  const r = Math.max(p.radius, 0.05);
-  const shellW = 0.12;
-  const shell = Math.exp(-((d - r) * (d - r)) / (2 * shellW * shellW));
-  const ripple = Math.pow(0.5 + 0.5 * Math.cos(d * 5 - t * 4), 4) * Math.exp((-d / r) * 0.6);
-  const v = clamp(shell + ripple * 0.55);
-  colorInto(out, o, 0.52 + p.hueShift + d * 0.08, clamp(0.9 - shell * 0.55), v, p.palette);
-}
-
-function perlinPlasma(out: Float32Array | number[], o: number, x: number, y: number, z: number, t: number, p: ResolvedParams) {
-  const dx = x - p.origin[0];
-  const dy = y - p.origin[1];
-  const dz = z - p.origin[2];
-  const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-  const a =
-    Math.sin(x * 1.7 + t * 0.9) +
-    Math.sin(y * 2.3 - t * 1.1) +
-    Math.sin(z * 1.9 + t * 0.7) +
-    Math.sin((x + z) * 1.1 + y * 1.5 + t * 0.5) +
-    Math.sin(d * (6 / Math.max(p.radius, 0.2)) - t * 1.3);
-  const n = a / 5;
-  const v = 0.2 + 0.8 * Math.pow(0.5 + 0.5 * Math.sin(n * TAU), 1.5);
-  colorInto(out, o, p.hueShift + n * 0.35 + t * 0.02, 0.85, v, p.palette);
-}
-
-function laserPlane(out: Float32Array | number[], o: number, x: number, _y: number, _z: number, t: number, p: ResolvedParams) {
-  const sweep = Math.sin(t * 0.8);
-  const px = p.origin[0] + sweep * (ROOM.width / 2);
-  const dir = Math.cos(t * 0.8) >= 0 ? 1 : -1;
-  const w = 0.05 + p.radius * 0.04;
-  const d = x - px;
-  const core = Math.exp(-(d * d) / (2 * w * w));
-  const trail = d * dir < 0 ? Math.exp(-Math.abs(d) / 0.6) * 0.3 : 0;
-  const v = clamp(core + trail);
-  colorInto(out, o, 0.52 + p.hueShift, clamp(0.95 - core * 0.8), v, p.palette);
-}
-
-function heightSpectrum(out: Float32Array | number[], o: number, _x: number, y: number, _z: number, t: number, p: ResolvedParams) {
-  const yn = clamp(y / ROOM.height);
-  const band = 0.5 + 0.5 * Math.sin(y * 7 - t * 2.5);
-  colorInto(out, o, p.hueShift + yn * 0.75 + t * 0.03, 0.9, 0.35 + 0.65 * band * band, p.palette);
-}
-
-const SHADERS: Record<ShaderId, typeof sphericalWave> = {
-  spherical_wave: sphericalWave,
-  perlin_plasma: perlinPlasma,
-  laser_plane: laserPlane,
-  height_spectrum: heightSpectrum,
-};
-
-/** Hot-path variant: writes RGB (0..1) into out[o..o+2] without allocating. */
-export function shadeInto(out: Float32Array | number[], o: number, shader: ShaderId, x: number, y: number, z: number, t: number, params: ResolvedParams): void {
-  SHADERS[shader](out, o, x, y, z, t, params);
-}
-
-/** Pure functional form: f(x, y, z, t, params) -> [R, G, B]. */
-export function evaluateVoxel(shader: ShaderId, x: number, y: number, z: number, t: number, params: ResolvedParams): [number, number, number] {
-  const out: [number, number, number] = [0, 0, 0];
-  SHADERS[shader](out, 0, x, y, z, t, params);
-  return out;
+  }
+  luts.set(id, lut);
+  return lut;
 }
 
 /* ------------------------------------------------------------------ */
@@ -204,7 +127,15 @@ export type RouteOutputs = Record<string, number>;
 
 export type ModSums = Record<ModTarget, number>;
 
-export function resolveParams(base: EffectParams, routes: ModulationRoute[], outputs: RouteOutputs, manualStrobe: boolean): { params: ResolvedParams; mods: ModSums } {
+/** Summed route outputs per layer target (`layer:<id>:<key>`), before scaling to the parameter range. */
+export type LayerMods = Record<string, number>;
+
+export function resolveParams(
+  base: EffectParams,
+  routes: ModulationRoute[],
+  outputs: RouteOutputs,
+  manualStrobe: boolean,
+): { params: ResolvedParams; mods: ModSums; layerMods: LayerMods } {
   const mods: ModSums = {
     sphere_radius: 0,
     shader_speed: 0,
@@ -215,8 +146,13 @@ export function resolveParams(base: EffectParams, routes: ModulationRoute[], out
     local_intensity: 0,
     local_wave: 0,
   };
+  const layerMods: LayerMods = {};
   // Spatial targets are summed for display only; the engine evaluates them per LED.
-  for (const r of routes) mods[r.target] += outputs[r.id] ?? 0;
+  for (const r of routes) {
+    const v = outputs[r.id] ?? 0;
+    if (r.target in mods) mods[r.target as ModTarget] += v;
+    else layerMods[r.target] = (layerMods[r.target] ?? 0) + v;
+  }
 
   const params: ResolvedParams = {
     ...base,
@@ -227,7 +163,7 @@ export function resolveParams(base: EffectParams, routes: ModulationRoute[], out
     masterBrightness: clamp(base.masterBrightness + mods.master_brightness * TARGET_META.master_brightness.range),
     strobe: manualStrobe || mods.strobe_override > 0.5,
   };
-  return { params, mods };
+  return { params, mods, layerMods };
 }
 
 /** Spatial weight of a sensor at distance d, 1 at the sensor, 0 beyond `radius`. */

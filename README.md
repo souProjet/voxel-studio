@@ -4,7 +4,7 @@
 
 **Volumetric pixel mapping and live sensor modulation for addressable LEDs.**
 
-Place LED strips in a 3D room, run volumetric shaders through them, patch sensors, LFOs, MIDI or OSC onto the effect, and stream the result to every WLED controller over UDP DDP at 40 FPS.
+Place LED strips in a 3D room, stack GPU shaders you can write yourself, patch sensors, LFOs, MIDI or OSC onto the effect, and stream the result to every WLED controller over UDP DDP at 40 FPS.
 
 [![CI](https://github.com/souProjet/voxel-studio/actions/workflows/ci.yml/badge.svg)](https://github.com/souProjet/voxel-studio/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -28,7 +28,7 @@ VOXEL // STUDIO gives every LED a position in meters, evaluates shaders in 3D sp
 
 ![Studio view with the scene tree, the 3D viewport and the effect and segment inspector](docs/media/studio.png)
 
-Build the room from lines, helices, polylines, arcs, serpentine matrices or imported point clouds. Drag handles in the viewport (Alt for vertical, Cmd/Ctrl to snap to the grid), switch camera presets, and undo everything. The inspector covers both the effect (origin, radius, speed, hue, palette, crossfade time, tempo) and the selected segment: controller, GPIO, chipset, LED count, geometry and wiring (data direction, skipped LEDs, gain, byte order).
+Build the room from lines, helices, polylines, arcs, serpentine matrices or imported point clouds. Drag handles in the viewport (Alt for vertical, Cmd/Ctrl to snap to the grid), switch camera presets, and undo everything. The inspector covers the layer stack, the scene (origin, radius, speed, hue, palette, crossfade time, tempo) and the selected segment: controller, GPIO, chipset, LED count, geometry and wiring (data direction, skipped LEDs, gain, byte order).
 
 ### Modulation
 
@@ -37,6 +37,22 @@ Build the room from lines, helices, polylines, arcs, serpentine matrices or impo
 A node editor between sources and the effect. Drag nodes around, drag from an output port to an input to patch a route, grab a connected input to move the wire or drop it anywhere to unplug it. Each wire carries a chip: drag it up or down to set the amount, double-click it to mute. Dropping a wire on a chip makes that source scale the route's depth, and envelopes take a trigger input. Wires animate with the live signal, generator nodes show their output as a scope, and the layout is saved with the project. Scroll to pan, pinch or Cmd+scroll to zoom.
 
 Select a wire to edit its curve (linear, exponential, S-curve, step), input range and smoothing in the inspector, or use the matrix below the graph. Spatial targets (`Local Intensity`, `Local Wave`) act around the sensor's position in the room instead of on the whole scene.
+
+### Writing a layer shader
+
+A layer is one GLSL ES 3.00 function, run once per LED on the GPU with the LED's position in meters:
+
+```glsl
+uniform float width; // 0.3 [0.05, 1]
+uniform vec3 tint; // #ff6600
+
+vec3 shade(vec3 p) {
+  float ring = abs(distance(p, ORIGIN) - RADIUS);
+  return tint * exp(-ring * ring / (width * width)) + palette(p.y / ROOM.y) * 0.1;
+}
+```
+
+The comment after a uniform sets its default and range. Built-ins include `TIME`, `PHASE`, `BEAT`, `ORIGIN`, `RADIUS`, `ROOM`, `INDEX`, `STRIP`, `ALONG` (position along the segment), `palette()`, `hsv()`, `noise()` and `fbm()`; the editor's reference panel lists them all.
 
 Sources:
 
@@ -75,8 +91,9 @@ The interface follows the system language and switches at runtime from the heade
 
 ## Features
 
-- **Up to 16,384 LEDs** per project, shaded on the CPU in about 4 ms per frame with crossfade.
-- **Four volumetric shaders**: spherical wave, plasma field, laser plane, height spectrum. Six palettes, timed crossfades, tap tempo and tempo-synced speed.
+- **Layered GPU effects**: a stack of GLSL shaders with blend modes (normal, add, screen, max, multiply), opacity and per-segment masks, crossfaded when a layer changes shader. Eight presets to start from (spherical wave, plasma, laser plane, height spectrum, fire, twinkle, chase, solid color), six palettes, tap tempo and tempo-synced speed.
+- **Write your own shaders**: a live GLSL editor compiles as you type and keeps the last working version on the LEDs while the code has errors. Each `uniform float` you declare becomes a slider and an input in the modulation graph.
+- **Up to 16,384 LEDs** per project; the GPU shades 16,000 LEDs through five layers in about 1.2 ms per frame.
 - **Show safety**: blackout that keeps streaming black, panic, release to let controllers fall back to their own effects, autosave with crash recovery, output that keeps running while the window is hidden.
 - **Mapping I/O**: import LED positions from CSV, export the per-LED mapping as CSV or JSON.
 - **Project files**: open and save JSON projects with native dialogs, undo/redo across the whole project.

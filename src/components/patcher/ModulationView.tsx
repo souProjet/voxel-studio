@@ -1,16 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Cable, ChevronDown, Plus, SlidersHorizontal, Spline, Trash, Workflow } from 'lucide-react';
-import type { CurveType, Generator, LfoShape, ModulationRoute } from '../../types/voxel';
+import { Cable, ChevronDown, Layers, Plus, SlidersHorizontal, Spline, Trash, Workflow } from 'lucide-react';
+import type { CurveType, Generator, LfoShape, ModulationRoute, RouteTarget } from '../../types/voxel';
 import { useVoxel, useVoxelActions } from '../../state/useVoxelStore';
 import { useDeleteCommands } from '../../state/useDeleteCommands';
-import { CURVES, TARGET_META } from '../../services/catalog';
+import { CURVES, TARGET_META, type TargetMeta } from '../../services/catalog';
+import { layerInputs, OPACITY_KEY, resolveTarget } from '../../services/layers';
+import { LayerDetail } from '../viewport/LayersPanel';
 import { clamp, routeOutput, routeTransfer } from '../../services/shaderMath';
 import { GENERATOR_META, LFO_SHAPES, modChannels } from '../../services/generators';
 import { inputs, learnInput, OSC_PORT } from '../../services/inputs';
 import { bridgeMode } from '../../services/tauriBridge';
 import { ScrubInput } from '../ui/ScrubInput';
 import { Field, IconButton, SectionHeader, Segmented, Select, SliderBar, TextInput, Toggle } from '../ui/primitives';
-import { t } from '../../i18n';
+import { t, tk } from '../../i18n';
+
+const MISSING_TARGET: TargetMeta = { label: tk('Missing target'), detail: '', range: 1, unit: '' };
 import { NodeEditor } from './NodeEditor';
 import { colorOf, GEN_ICON, labelOf, TARGETS, type Patch } from './patchModel';
 
@@ -35,7 +39,8 @@ function ResponseCurve({ route, patch }: { route: ModulationRoute; patch: Patch 
     pts.push(`${px(u).toFixed(1)},${py(routeTransfer(route, u)).toFixed(1)}`);
   }
   const c = colorOf(patch, route.source);
-  const meta = TARGET_META[route.target];
+  const layers = useVoxel((s) => s.layers);
+  const meta = resolveTarget(route.target, layers) ?? MISSING_TARGET;
 
   return (
     <div className="flex flex-col gap-2">
@@ -255,6 +260,7 @@ function GeneratorCard({ g, patch }: { g: Generator; patch: Patch }) {
 
 function MatrixRow({ route, patch, selected }: { route: ModulationRoute; patch: Patch; selected: boolean }) {
   const { updateRoute, removeRoute, selectRoute } = useVoxelActions();
+  const layers = useVoxel((s) => s.layers);
   const set = (p: Partial<ModulationRoute>) => updateRoute(route.id, p);
   const out = routeOutput(route, patch.values);
   const c = colorOf(patch, route.source);
@@ -273,7 +279,11 @@ function MatrixRow({ route, patch, selected }: { route: ModulationRoute; patch: 
       <Select
         value={route.target}
         onChange={(target) => set({ target })}
-        options={TARGETS.map((tg) => ({ value: tg, label: TARGET_META[tg].spatial ? `${t(TARGET_META[tg].label)} (3D)` : t(TARGET_META[tg].label) }))}
+        options={[
+          ...TARGETS.map((tg) => ({ value: tg as RouteTarget, label: TARGET_META[tg].spatial ? `${t(TARGET_META[tg].label)} (3D)` : t(TARGET_META[tg].label) })),
+          ...layers.flatMap((l) => layerInputs(l).map((x) => ({ value: x.target, label: `${l.name} · ${x.key === OPACITY_KEY ? t('Opacity') : x.key}` }))),
+          ...(resolveTarget(route.target, layers) ? [] : [{ value: route.target, label: t('Missing target') }]),
+        ]}
       />
       <Segmented<CurveType>
         mono
@@ -315,17 +325,21 @@ export function ModulationView() {
   }, [sensors, generators]);
   const patch: Patch = { ...structure, values };
   const selectedId = useVoxel((s) => s.selectedRouteId);
-  const { selectRoute, addRoute } = useVoxelActions();
+  const { selectRoute, addRoute, selectLayer } = useVoxelActions();
+  const layers = useVoxel((s) => s.layers);
+  const shaderErrors = useVoxel((s) => s.shaderErrors);
   const [nodeId, setNodeId] = useState<string | null>(null);
   const [matrixOpen, setMatrixOpen] = useState(true);
   const selected = routes.find((r) => r.id === selectedId) ?? null;
   const selectedGen = !selected && nodeId ? (generators.find((g) => g.id === nodeId) ?? null) : null;
+  const selectedLayer = !selected && nodeId ? (layers.find((l) => l.id === nodeId) ?? null) : null;
   const pickRoute = (id: string | null) => {
     selectRoute(id);
     if (id) setNodeId(null);
   };
   const pickNode = (id: string | null) => {
     setNodeId(id);
+    if (id && layers.some((l) => l.id === id)) selectLayer(id);
     if (id) selectRoute(null);
   };
 
@@ -359,10 +373,15 @@ export function ModulationView() {
               <SectionHeader title={t(GENERATOR_META[selectedGen.kind].label)} icon={GEN_ICON[selectedGen.kind]} accent={GENERATOR_META[selectedGen.kind].color} />
               <GeneratorCard key={selectedGen.id} g={selectedGen} patch={patch} />
             </>
+          ) : selectedLayer ? (
+            <>
+              <SectionHeader title={t('Layer')} icon={Layers} accent="#a78bfa" />
+              <LayerDetail layer={selectedLayer} error={shaderErrors[selectedLayer.id]} />
+            </>
           ) : (
             <>
               <SectionHeader title={t('Inspector')} icon={SlidersHorizontal} />
-              <p className="px-3 py-3 text-[11px] leading-relaxed text-zinc-500">{t('Select a wire to shape its response, or a generator to edit it.')}</p>
+              <p className="px-3 py-3 text-[11px] leading-relaxed text-zinc-500">{t('Select a wire to shape its response, or a generator or a layer to edit it.')}</p>
             </>
           )}
         </aside>

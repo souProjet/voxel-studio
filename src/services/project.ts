@@ -1,5 +1,6 @@
-import type { EffectParams, ESP32Device, Generator, LEDStrip, ModulationRoute, PatchLayout, SensorNode, ShaderId } from '../types/voxel';
-import { EFFECT_DEFAULTS, SHADER_PRESETS } from './catalog';
+import type { EffectLayer, EffectParams, ESP32Device, Generator, LEDStrip, ModulationRoute, PatchLayout, SensorNode } from '../types/voxel';
+import { EFFECT_DEFAULTS } from './catalog';
+import { LAYER_DEFAULTS, makeLayer } from './layers';
 import { normalizeStrip } from './geometry';
 import { normalizeGenerator, ROUTE_DEFAULTS } from './generators';
 import type { VoxelStore } from '../state/useVoxelStore';
@@ -19,7 +20,8 @@ export interface ProjectData {
   generators: Generator[];
   /** Node positions in the modulation editor. */
   patchLayout: PatchLayout;
-  shader: ShaderId;
+  /** Effect stack, bottom first. */
+  layers: EffectLayer[];
   params: EffectParams;
   showRoom: boolean;
   showSphere: boolean;
@@ -31,7 +33,7 @@ interface ProjectFile extends ProjectData {
   savedAt: string;
 }
 
-export const PROJECT_KEYS: (keyof ProjectData)[] = ['strips', 'devices', 'routes', 'sensors', 'generators', 'patchLayout', 'shader', 'params', 'showRoom', 'showSphere'];
+export const PROJECT_KEYS: (keyof ProjectData)[] = ['strips', 'devices', 'routes', 'sensors', 'generators', 'patchLayout', 'layers', 'params', 'showRoom', 'showSphere'];
 
 export function pickProject(source: ProjectData): ProjectData {
   return {
@@ -41,7 +43,7 @@ export function pickProject(source: ProjectData): ProjectData {
     sensors: source.sensors,
     generators: source.generators,
     patchLayout: source.patchLayout,
-    shader: source.shader,
+    layers: source.layers,
     params: source.params,
     showRoom: source.showRoom,
     showSphere: source.showSphere,
@@ -55,6 +57,10 @@ export function serializeProject(data: ProjectData): string {
 
 const isArray = (v: unknown): v is unknown[] => Array.isArray(v);
 const isVec3 = (v: unknown) => isArray(v) && v.length === 3 && v.every((n) => typeof n === 'number' && Number.isFinite(n));
+
+/** Files from before layers had one built-in shader: it becomes a single layer running its GLSL port. */
+const LEGACY_SHADERS: Record<string, string> = { spherical_wave: 'sphere', perlin_plasma: 'plasma', laser_plane: 'laser', height_spectrum: 'height' };
+const legacyLayer = (shader: unknown) => makeLayer('layer-base', LEGACY_SHADERS[String(shader)] ?? 'sphere', 'Base');
 
 /** Keeps only well-formed node positions; a broken layout falls back to the automatic one. */
 function parseLayout(v: unknown): PatchLayout {
@@ -92,7 +98,10 @@ export function parseProject(text: string): ProjectData {
   }
   const p = f.params;
   if (!p || !isVec3(p.origin)) throw new Error(t('Project effect parameters are invalid.'));
-  if (!SHADER_PRESETS.some((x) => x.id === f.shader)) throw new Error(t('Unknown shader "{name}".', { name: String(f.shader) }));
+  const layers = isArray(f.layers) ? (f.layers as EffectLayer[]) : [legacyLayer((f as { shader?: unknown }).shader)];
+  for (const l of layers) {
+    if (typeof l.id !== 'string' || typeof l.code !== 'string') throw new Error(t('Invalid layer "{name}".', { name: String(l.name ?? l.id) }));
+  }
   const generators = isArray(f.generators) ? (f.generators as Generator[]) : [];
   for (const g of generators) {
     if (typeof g.id !== 'string' || !['lfo', 'envelope', 'macro', 'osc', 'midi'].includes(g.kind))
@@ -106,6 +115,7 @@ export function parseProject(text: string): ProjectData {
     routes: (f.routes as ModulationRoute[]).map((r) => ({ ...ROUTE_DEFAULTS, ...r })),
     generators: generators.map(normalizeGenerator),
     patchLayout: parseLayout(f.patchLayout),
+    layers: layers.map((l) => ({ ...LAYER_DEFAULTS, ...l })),
   });
 }
 

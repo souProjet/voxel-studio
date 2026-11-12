@@ -1,7 +1,7 @@
-import type { CurveType, EffectParams, LedChipset, ModTarget, PaletteId, SensorKind, ShaderPreset, SimScenario } from '../types/voxel';
+import type { CurveType, EffectParams, LedChipset, ModTarget, PaletteId, SensorKind, SimScenario } from '../types/voxel';
 import { tk } from '../i18n';
 
-/** Total LEDs per project. Shading 20k LEDs with a crossfade costs about 4 ms per frame on CPU. */
+/** Total LEDs per project. Layers shade on the GPU; the per-LED post passes (spatial fields, limiter, DDP) stay on the CPU. */
 export const MAX_LEDS = 16384;
 export const DDP_PORT = 4048;
 export const DDP_SEND_HZ = 40;
@@ -25,13 +25,6 @@ export const CHIPSETS: Record<LedChipset, ChipsetSpec> = {
   WS2815: { voltage: 12, maFullWhite: 20, maIdle: 1 },
   WS2811: { voltage: 12, maFullWhite: 20, maIdle: 1 },
 };
-
-export const SHADER_PRESETS: ShaderPreset[] = [
-  { id: 'spherical_wave', label: tk('Spherical Wave'), short: 'SPHERE', description: tk('Radial wave from the effect origin, shell at radius') },
-  { id: 'perlin_plasma', label: tk('Plasma Field'), short: 'PLASMA', description: tk('Trigonometric 3D interference field over X, Y, Z') },
-  { id: 'laser_plane', label: tk('Laser Plane'), short: 'LASER', description: tk('Light plane sweeping the X axis') },
-  { id: 'height_spectrum', label: tk('Height Spectrum'), short: 'HEIGHT', description: tk('Hue gradient indexed on LED height Y') },
-];
 
 /** Effect fields added after the first project format; also the defaults for older files. */
 export const EFFECT_DEFAULTS: Pick<EffectParams, 'palette' | 'fadeSec' | 'bpm' | 'bpmSync'> = {
@@ -136,6 +129,9 @@ export const TARGET_META: Record<ModTarget, TargetMeta> = {
   local_intensity: { label: tk('Local Intensity'), detail: tk('Per-LED gain near sensor'), range: 2, unit: 'x', spatial: true },
   local_wave: { label: tk('Local Wave'), detail: tk('Ring from sensor on onset'), range: 1, unit: '', spatial: true },
 };
+
+/** Spatial targets act per LED around the source sensor; layer targets are never spatial. */
+export const isSpatialTarget = (target: string) => (TARGET_META as Record<string, TargetMeta | undefined>)[target]?.spatial === true;
 
 export const CURVES: CurveType[] = ['linear', 'exp', 'scurve', 'step'];
 

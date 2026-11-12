@@ -2,6 +2,7 @@ import { createContext, createElement, useContext, useState, useSyncExternalStor
 import type {
   AudioBand,
   DeviceHealth,
+  EffectLayer,
   EffectParams,
   EngineStats,
   ESP32Device,
@@ -15,7 +16,6 @@ import type {
   ScanState,
   SensorKind,
   SensorNode,
-  ShaderId,
   StripShape,
   TestPattern,
   Vec3,
@@ -24,6 +24,7 @@ import type {
 import { t, tk } from '../i18n';
 import { EFFECT_DEFAULTS, KIND_META, MAX_LEDS, SCENARIOS } from '../services/catalog';
 import { channelKey, sensorIdOf } from '../services/sensors';
+import { makeLayer, parseLayerTarget, presetById, PRESETS } from '../services/layers';
 import { loadAutosave, pickProject, PROJECT_KEYS, type ProjectData } from '../services/project';
 import { normalizeStrip } from '../services/geometry';
 import { GENERATOR_META, modChannels, normalizeGenerator, ROUTE_DEFAULTS } from '../services/generators';
@@ -38,7 +39,13 @@ export interface VoxelState {
   patchLayout: PatchLayout;
   /** Normalized channel values (0..1), published by the engine at the sensor tick rate. */
   sensorValues: Record<string, number>;
-  shader: ShaderId;
+  /** Effect stack, bottom first. */
+  layers: EffectLayer[];
+  selectedLayerId: string | null;
+  /** The GLSL editor drawer is open on the selected layer. */
+  codeOpen: boolean;
+  /** Compiler errors per layer id, published by the engine. */
+  shaderErrors: Record<string, string>;
   params: EffectParams;
   selectedStripId: string | null;
   selectedSensorId: string | null;
@@ -308,7 +315,7 @@ export function defaultProject(): ProjectData {
     sensors: INITIAL_SENSORS,
     generators: [],
     patchLayout: {},
-    shader: 'spherical_wave',
+    layers: [makeLayer('layer-base', 'sphere', 'Base')],
     params: { origin: [0, 1.2, 0], radius: 1.4, speed: 1, hueShift: 0, masterBrightness: 0.8, ...EFFECT_DEFAULTS },
     showRoom: true,
     showSphere: true,
@@ -325,6 +332,9 @@ function initialState(): VoxelState {
     selectedStripId: saved ? null : 'strip-helix',
     selectedSensorId: null,
     selectedRouteId: saved ? null : 'route-bass',
+    selectedLayerId: (saved?.data ?? defaultProject()).layers[0]?.id ?? null,
+    codeOpen: false,
+    shaderErrors: {},
     ddpOutput: true,
     manualStrobe: false,
     scan: { active: false, bit: 0 },
@@ -416,7 +426,49 @@ function createActions(store: VoxelStore) {
   const set = store.setState;
   return {
     setView: (view: ViewId) => set({ view }),
-    setShader: (shader: ShaderId) => set({ shader }),
+    selectLayer: (selectedLayerId: string | null) => set({ selectedLayerId }),
+    setCodeOpen: (codeOpen: boolean) => set({ codeOpen }),
+    /** Adds a layer on top of the stack running a preset, and selects it. */
+    addLayer: (presetId: string) =>
+      set((s) => {
+        const preset = presetById(presetId) ?? PRESETS[0];
+        const layer = { ...makeLayer(uid('layer'), preset.id, preset.short), blend: s.layers.length ? ('add' as const) : ('normal' as const) };
+        return { layers: [...s.layers, layer], selectedLayerId: layer.id };
+      }),
+    updateLayer: (id: string, patch: Partial<EffectLayer>) => set((s) => ({ layers: s.layers.map((l) => (l.id === id ? { ...l, ...patch } : l)) })),
+    setLayerParam: (id: string, name: string, value: number) => set((s) => ({ layers: s.layers.map((l) => (l.id === id ? { ...l, params: { ...l.params, [name]: value } } : l)) })),
+    setLayerColor: (id: string, name: string, value: string) => set((s) => ({ layers: s.layers.map((l) => (l.id === id ? { ...l, colors: { ...l.colors, [name]: value } } : l)) })),
+    /** Swaps a layer's shader for a preset; a layer still named after its preset takes the new name. */
+    loadPreset: (id: string, presetId: string) =>
+      set((s) => {
+        const preset = presetById(presetId);
+        if (!preset) return {};
+        return {
+          layers: s.layers.map((l) => (l.id === id ? { ...l, code: preset.code, name: PRESETS.some((p) => p.short === l.name) ? preset.short : l.name } : l)),
+        };
+      }),
+    moveLayer: (id: string, delta: -1 | 1) =>
+      set((s) => {
+        const i = s.layers.findIndex((l) => l.id === id);
+        const j = i + delta;
+        if (i < 0 || j < 0 || j >= s.layers.length) return {};
+        const layers = [...s.layers];
+        [layers[i], layers[j]] = [layers[j], layers[i]];
+        return { layers };
+      }),
+    /** Removes a layer with the routes that modulate it. */
+    removeLayer: (id: string) =>
+      set((s) => {
+        const layers = s.layers.filter((l) => l.id !== id);
+        const { [id]: _gone, ...patchLayout } = s.patchLayout;
+        return {
+          layers,
+          patchLayout,
+          routes: s.routes.filter((r) => parseLayerTarget(r.target)?.layerId !== id),
+          selectedLayerId: s.selectedLayerId === id ? (layers[layers.length - 1]?.id ?? null) : s.selectedLayerId,
+          codeOpen: s.codeOpen && layers.length > 0,
+        };
+      }),
     setParams: (patch: Partial<EffectParams>) => set((s) => ({ params: { ...s.params, ...patch } })),
     /** Tap tempo: averages the last taps; a pause over 2 s starts a new measure. */
     tapTempo: () => {
@@ -464,6 +516,8 @@ function createActions(store: VoxelStore) {
           selectedStripId: null,
           selectedSensorId: null,
           selectedRouteId: null,
+          selectedLayerId: 'layer-base',
+          codeOpen: false,
           sensorValues: {},
         },
         { resetHistory: true },
@@ -478,6 +532,8 @@ function createActions(store: VoxelStore) {
           selectedStripId: null,
           selectedSensorId: null,
           selectedRouteId: null,
+          selectedLayerId: data.layers[0]?.id ?? null,
+          codeOpen: false,
           sensorValues: {},
         },
         { resetHistory: true },
