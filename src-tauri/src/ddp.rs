@@ -115,7 +115,13 @@ mod tests {
         let rx = UdpSocket::bind("127.0.0.1:0").unwrap();
         let tx = DdpSender::bind().unwrap();
         let stats = tx.send_frame(rx.local_addr().unwrap(), &[10, 20, 30], 2).unwrap();
-        assert_eq!(stats, SendStats { packets: 1, bytes: HEADER_LEN + 3 });
+        assert_eq!(
+            stats,
+            SendStats {
+                packets: 1,
+                bytes: HEADER_LEN + 3
+            }
+        );
         let mut buf = [0u8; 64];
         let (n, _) = rx.recv_from(&mut buf).unwrap();
         assert_eq!(&buf[..n], &[0x41, 0x02, 0x0B, 0x01, 0, 0, 0, 0, 0, 3, 10, 20, 30]);

@@ -6,6 +6,7 @@ import { ROOM } from '../../services/catalog';
 import { buildLayout } from '../../services/geometry';
 import { grayBit, grayDecode } from '../../services/shaderMath';
 import { Card, SectionHeader, Segmented, Toggle } from '../ui/primitives';
+import { t, tk } from '../../i18n';
 
 const BITS = 10;
 const IMG_W = 1920;
@@ -15,8 +16,8 @@ const PIXEL_NOISE = 0.35; // centroid noise, px (1 sigma)
 type CamId = 'A' | 'B';
 
 const CAM_DEF: Record<CamId, { label: string; angle: number }> = {
-  A: { label: 'Camera A · 0°', angle: 0 },
-  B: { label: 'Camera B · 45°', angle: 45 },
+  A: { label: tk('Camera A · 0°'), angle: 0 },
+  B: { label: tk('Camera B · 45°'), angle: 45 },
 };
 
 function makeCamera(id: CamId): THREE.PerspectiveCamera {
@@ -68,20 +69,45 @@ function rayFrom(cam: THREE.PerspectiveCamera, u: number, v: number): { o: THREE
 /** Midpoint of the common perpendicular between two rays. */
 function triangulate(a: { o: THREE.Vector3; d: THREE.Vector3 }, b: { o: THREE.Vector3; d: THREE.Vector3 }): THREE.Vector3 {
   const w0 = a.o.clone().sub(b.o);
-  const A = a.d.dot(a.d), B = a.d.dot(b.d), C = b.d.dot(b.d), D = a.d.dot(w0), E = b.d.dot(w0);
+  const A = a.d.dot(a.d),
+    B = a.d.dot(b.d),
+    C = b.d.dot(b.d),
+    D = a.d.dot(w0),
+    E = b.d.dot(w0);
   const den = A * C - B * B || 1e-9;
   const s = (B * E - C * D) / den;
-  const t = (A * E - B * D) / den;
-  return a.o.clone().addScaledVector(a.d, s).add(b.o.clone().addScaledVector(b.d, t)).multiplyScalar(0.5);
+  const u = (A * E - B * D) / den;
+  return a.o.clone().addScaledVector(a.d, s).add(b.o.clone().addScaledVector(b.d, u)).multiplyScalar(0.5);
 }
 
 const ROOM_EDGES: [number, number, number][][] = (() => {
-  const w = ROOM.width / 2, d = ROOM.depth / 2, h = ROOM.height;
+  const w = ROOM.width / 2,
+    d = ROOM.depth / 2,
+    h = ROOM.height;
   const c: [number, number, number][] = [
-    [-w, 0, -d], [w, 0, -d], [w, 0, d], [-w, 0, d],
-    [-w, h, -d], [w, h, -d], [w, h, d], [-w, h, d],
+    [-w, 0, -d],
+    [w, 0, -d],
+    [w, 0, d],
+    [-w, 0, d],
+    [-w, h, -d],
+    [w, h, -d],
+    [w, h, d],
+    [-w, h, d],
   ];
-  const e = [[0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4], [0, 4], [1, 5], [2, 6], [3, 7]];
+  const e = [
+    [0, 1],
+    [1, 2],
+    [2, 3],
+    [3, 0],
+    [4, 5],
+    [5, 6],
+    [6, 7],
+    [7, 4],
+    [0, 4],
+    [1, 5],
+    [2, 6],
+    [3, 7],
+  ];
   return e.map(([a, b]) => [c[a], c[b]]);
 })();
 
@@ -135,7 +161,10 @@ export function CameraScannerView() {
 
   // Simulated video feed.
   const decodedRef = useRef(false);
-  decodedRef.current = complete(cam);
+  const camDecoded = complete(cam);
+  useEffect(() => {
+    decodedRef.current = camDecoded;
+  }, [camDecoded]);
   useEffect(() => {
     const canvas = canvasRef.current!;
     const ctx = canvas.getContext('2d')!;
@@ -159,14 +188,16 @@ export function CameraScannerView() {
     const draw = () => {
       raf = requestAnimationFrame(draw);
       const dpr = Math.min(window.devicePixelRatio, 2);
-      const cw = canvas.clientWidth, ch = canvas.clientHeight;
+      const cw = canvas.clientWidth,
+        ch = canvas.clientHeight;
       if (!cw) return;
       if (canvas.width !== cw * dpr) {
         canvas.width = cw * dpr;
         canvas.height = ch * dpr;
       }
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      const sx = cw / IMG_W, sy = ch / IMG_H;
+      const sx = cw / IMG_W,
+        sy = ch / IMG_H;
       frameNo++;
 
       ctx.fillStyle = '#050506';
@@ -194,7 +225,8 @@ export function CameraScannerView() {
       ctx.globalCompositeOperation = 'lighter';
       for (const d of dets) {
         if (!d.inFrame) continue;
-        const x = d.u * sx, y = d.v * sy;
+        const x = d.u * sx,
+          y = d.v * sy;
         if (grayBit(d.led, bit)) {
           const g = ctx.createRadialGradient(x, y, 0, x, y, 5);
           g.addColorStop(0, 'rgba(255,255,255,0.95)');
@@ -215,12 +247,17 @@ export function CameraScannerView() {
         ctx.font = '9px "JetBrains Mono", monospace';
         for (const d of dets) {
           if (!d.inFrame || d.led % 20 !== 0) continue;
-          const x = d.u * sx, y = d.v * sy;
+          const x = d.u * sx,
+            y = d.v * sy;
           ctx.beginPath();
-          ctx.moveTo(x - 6, y); ctx.lineTo(x - 2, y);
-          ctx.moveTo(x + 2, y); ctx.lineTo(x + 6, y);
-          ctx.moveTo(x, y - 6); ctx.lineTo(x, y - 2);
-          ctx.moveTo(x, y + 2); ctx.lineTo(x, y + 6);
+          ctx.moveTo(x - 6, y);
+          ctx.lineTo(x - 2, y);
+          ctx.moveTo(x + 2, y);
+          ctx.lineTo(x + 6, y);
+          ctx.moveTo(x, y - 6);
+          ctx.lineTo(x, y - 2);
+          ctx.moveTo(x, y + 2);
+          ctx.lineTo(x, y + 6);
           ctx.stroke();
           ctx.fillText(`#${d.led} ${d.u.toFixed(0)},${d.v.toFixed(0)}`, x + 7, y - 4);
         }
@@ -231,15 +268,24 @@ export function CameraScannerView() {
       for (let y = 0; y < ch; y += 3) ctx.fillRect(0, y, cw, 1);
       ctx.fillStyle = 'rgba(228,228,231,0.75)';
       ctx.font = '10px "JetBrains Mono", monospace';
-      ctx.fillText(`${CAM_DEF[cam].label.toUpperCase()}  ·  ${IMG_W}×${IMG_H}  ·  EXP 1/250`, 12, 18);
-      ctx.fillText(`GRAY BIT ${String(bit + 1).padStart(2, '0')}/${BITS}  ·  FRAME ${String(frameNo).padStart(6, '0')}`, 12, 32);
+      ctx.fillText(`${t(CAM_DEF[cam].label).toUpperCase()}  ·  ${IMG_W}×${IMG_H}  ·  EXP 1/250`, 12, 18);
+      ctx.fillText(t('GRAY BIT {bit}/{total}  ·  FRAME {frame}', { bit: String(bit + 1).padStart(2, '0'), total: BITS, frame: String(frameNo).padStart(6, '0') }), 12, 32);
       ctx.strokeStyle = 'rgba(228,228,231,0.25)';
-      const m = 10, l = 14;
+      const m = 10,
+        l = 14;
       ctx.beginPath();
-      ctx.moveTo(m, m + l); ctx.lineTo(m, m); ctx.lineTo(m + l, m);
-      ctx.moveTo(cw - m - l, m); ctx.lineTo(cw - m, m); ctx.lineTo(cw - m, m + l);
-      ctx.moveTo(m, ch - m - l); ctx.lineTo(m, ch - m); ctx.lineTo(m + l, ch - m);
-      ctx.moveTo(cw - m - l, ch - m); ctx.lineTo(cw - m, ch - m); ctx.lineTo(cw - m, ch - m - l);
+      ctx.moveTo(m, m + l);
+      ctx.lineTo(m, m);
+      ctx.lineTo(m + l, m);
+      ctx.moveTo(cw - m - l, m);
+      ctx.lineTo(cw - m, m);
+      ctx.lineTo(cw - m, m + l);
+      ctx.moveTo(m, ch - m - l);
+      ctx.lineTo(m, ch - m);
+      ctx.lineTo(m + l, ch - m);
+      ctx.moveTo(cw - m - l, ch - m);
+      ctx.lineTo(cw - m, ch - m);
+      ctx.lineTo(cw - m, ch - m - l);
       ctx.stroke();
     };
     raf = requestAnimationFrame(draw);
@@ -296,11 +342,9 @@ export function CameraScannerView() {
       <div className="flex min-w-0 flex-1 flex-col gap-3 p-4">
         <div className="flex items-center gap-3">
           <ScanLine size={14} className="text-spatial" />
-          <span className="text-[13px] font-medium text-zinc-200">Optical Auto-Calibration</span>
-          <span className="text-[11px] text-zinc-500">10-bit reflected Gray code · stereo triangulation</span>
-          <span className="ml-auto rounded-[4px] border border-line px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-zinc-500">
-            Simulated camera feed
-          </span>
+          <span className="text-[13px] font-medium text-zinc-200">{t('Optical Auto-Calibration')}</span>
+          <span className="text-[11px] text-zinc-500">{t('10-bit reflected Gray code · stereo triangulation')}</span>
+          <span className="ml-auto rounded-[4px] border border-line px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-zinc-500">{t('Simulated camera feed')}</span>
         </div>
         <div className="relative w-full overflow-hidden rounded-md border border-line bg-black" style={{ aspectRatio: '16 / 9', maxHeight: 'calc(100vh - 260px)' }}>
           <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />
@@ -315,8 +359,8 @@ export function CameraScannerView() {
             <span>LED</span>
             <span>u px</span>
             <span>v px</span>
-            <span>Gray code (b10…b1)</span>
-            <span className="text-right">Decoded</span>
+            <span>{t('Gray code (b10…b1)')}</span>
+            <span className="text-right">{t('Decoded')}</span>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto">
             {rows.map((d) => {
@@ -332,7 +376,7 @@ export function CameraScannerView() {
                   <span>{d.u.toFixed(1)}</span>
                   <span>{d.v.toFixed(1)}</span>
                   <span className="tracking-[0.2em] text-zinc-500">{code}</span>
-                  <span className={`text-right ${decoded ? 'text-spatial' : 'text-zinc-600'}`}>{decoded ? grayDecode(gray) : '—'}</span>
+                  <span className={`text-right ${decoded ? 'text-spatial' : 'text-zinc-600'}`}>{decoded ? grayDecode(gray) : '-'}</span>
                 </div>
               );
             })}
@@ -341,7 +385,7 @@ export function CameraScannerView() {
       </div>
 
       <aside className="flex w-[300px] shrink-0 flex-col overflow-y-auto border-l border-line bg-panel">
-        <SectionHeader title="Capture" icon={Camera} />
+        <SectionHeader title={t('Capture')} icon={Camera} />
         <div className="flex flex-col gap-2.5 p-3">
           <Segmented<CamId>
             value={cam}
@@ -355,8 +399,8 @@ export function CameraScannerView() {
             ]}
           />
           <div className="flex items-center justify-between">
-            <span className="text-[11px] text-zinc-400">Project pattern on LEDs</span>
-            <Toggle checked={project} onChange={setProject} title="Drives the physical LEDs with the current Gray-code bit" />
+            <span className="text-[11px] text-zinc-400">{t('Project pattern on LEDs')}</span>
+            <Toggle checked={project} onChange={setProject} title={t('Drives the physical LEDs with the current Gray-code bit')} />
           </div>
           <div className="grid grid-cols-5 gap-1">
             {Array.from({ length: BITS }, (_, i) => {
@@ -389,7 +433,7 @@ export function CameraScannerView() {
               className="flex h-7 flex-1 items-center justify-center gap-1.5 rounded-[5px] border border-spatial/50 bg-spatial/10 text-[11px] text-spatial disabled:opacity-40"
             >
               {playing ? <Pause size={12} /> : <Play size={12} />}
-              {playing ? 'Pause' : decoded ? 'Sequence done' : 'Run sequence'}
+              {playing ? t('Pause') : decoded ? t('Sequence done') : t('Run sequence')}
             </button>
             <button
               type="button"
@@ -398,7 +442,7 @@ export function CameraScannerView() {
                 setCaptured((c) => ({ ...c, [cam]: Array(BITS).fill(false) }));
                 setScan({ bit: 0 });
               }}
-              title="Reset this camera"
+              title={t('Reset this camera')}
               className="flex h-7 w-7 items-center justify-center rounded-[5px] border border-line text-zinc-500 hover:border-line-hi hover:text-zinc-200"
             >
               <RotateCcw size={12} />
@@ -406,10 +450,13 @@ export function CameraScannerView() {
           </div>
           <div className="flex items-center justify-between font-mono text-[10px] text-zinc-500">
             <span>
-              captured <span className="text-zinc-300">{bitsDone}/{BITS}</span>
+              {t('captured')}{' '}
+              <span className="text-zinc-300">
+                {bitsDone}/{BITS}
+              </span>
             </span>
             <span>
-              in frame <span className="text-zinc-300">{rows.length}</span>
+              {t('in frame')} <span className="text-zinc-300">{rows.length}</span>
             </span>
           </div>
           <div className="h-1 overflow-hidden rounded-full bg-line">
@@ -417,12 +464,12 @@ export function CameraScannerView() {
           </div>
         </div>
 
-        <SectionHeader title="Triangulation" icon={Target} />
+        <SectionHeader title={t('Triangulation')} icon={Target} />
         <div className="flex flex-col gap-2 p-3">
           <div className="grid grid-cols-2 gap-1.5">
             {(['A', 'B'] as CamId[]).map((id) => (
               <div key={id} className="rounded-[5px] border border-line bg-inset px-2 py-1.5">
-                <div className="text-[10px] text-zinc-500">Cam {id} decoded</div>
+                <div className="text-[10px] text-zinc-500">{t('Cam {id} decoded', { id })}</div>
                 <div className={`font-mono text-[13px] ${complete(id) ? 'text-spatial' : 'text-zinc-600'}`}>{id === 'A' ? report.decodedA : report.decodedB}</div>
               </div>
             ))}
@@ -430,11 +477,11 @@ export function CameraScannerView() {
           {report.triangulated > 0 ? (
             <div className="flex flex-col gap-1 rounded-[5px] border border-line bg-inset p-2 font-mono text-[11px]">
               {[
-                ['Triangulated', `${report.triangulated} LEDs`, 'text-zinc-200'],
-                ['Mean error', `${report.mean.toFixed(2)} mm`, 'text-net'],
-                ['RMS error', `${report.rms.toFixed(2)} mm`, 'text-net'],
-                ['P95 error', `${report.p95.toFixed(2)} mm`, 'text-gps'],
-                ['Max error', `${report.max.toFixed(2)} mm`, 'text-gps'],
+                [t('Triangulated'), `${report.triangulated} LEDs`, 'text-zinc-200'],
+                [t('Mean error'), `${report.mean.toFixed(2)} mm`, 'text-net'],
+                [t('RMS error'), `${report.rms.toFixed(2)} mm`, 'text-net'],
+                [t('P95 error'), `${report.p95.toFixed(2)} mm`, 'text-gps'],
+                [t('Max error'), `${report.max.toFixed(2)} mm`, 'text-gps'],
                 ['Reproj. A', `${report.reproj.toFixed(3)} px`, 'text-zinc-300'],
               ].map(([k, v, c]) => (
                 <div key={k} className="flex justify-between">
@@ -446,12 +493,14 @@ export function CameraScannerView() {
           ) : (
             <div className="flex items-start gap-2 rounded-[5px] border border-dashed border-line p-2 text-[11px] leading-snug text-zinc-500">
               <Crosshair size={12} className="mt-0.5 shrink-0" />
-              Capture all 10 bits on both cameras to decode LED IDs and triangulate 3D positions.
+              {t('Capture all 10 bits on both cameras to decode LED IDs and triangulate 3D positions.')}
             </div>
           )}
           <p className="text-[10px] leading-snug text-zinc-600">
-            Centroid noise σ = {PIXEL_NOISE} px. Rays are back-projected from each camera and intersected at the midpoint of
-            their common perpendicular; error is measured against the mapped layout.
+            {t(
+              'Centroid noise σ = {noise} px. Rays are back-projected from each camera and intersected at the midpoint of their common perpendicular; error is measured against the mapped layout.',
+              { noise: PIXEL_NOISE },
+            )}
           </p>
         </div>
       </aside>

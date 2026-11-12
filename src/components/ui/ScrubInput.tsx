@@ -51,7 +51,7 @@ export function ScrubInput({
   const [draft, setDraft] = useState('');
   const drag = useRef<{ x0: number; v0: number; moved: boolean } | null>(null);
   const prec = precision ?? Math.max(0, decimals(step) - Math.round(Math.log10(displayScale)));
-  const color = axis ? AXIS_COLOR[axis] : accent ?? '#71717a';
+  const color = axis ? AXIS_COLOR[axis] : (accent ?? '#71717a');
   const bounded = Number.isFinite(min) && Number.isFinite(max);
   const pct = (v: number) => (bounded ? Math.max(0, Math.min(1, (v - min) / (max - min))) * 100 : 0);
 
@@ -111,9 +111,7 @@ export function ScrubInput({
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
     >
-      {bounded && !editing && (
-        <div className="pointer-events-none absolute inset-y-0 left-0 opacity-[0.13]" style={{ width: `${pct(value)}%`, background: color }} />
-      )}
+      {bounded && !editing && <div className="pointer-events-none absolute inset-y-0 left-0 opacity-[0.13]" style={{ width: `${pct(value)}%`, background: color }} />}
       {bounded && modulated !== undefined && !editing && Math.abs(modulated - value) > step / 2 && (
         <div className="pointer-events-none absolute inset-y-1 w-px bg-audio" style={{ left: `${pct(modulated)}%` }} />
       )}

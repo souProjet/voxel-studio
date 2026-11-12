@@ -1,4 +1,4 @@
-import { createContext, createElement, useContext, useRef, useSyncExternalStore, type ReactNode } from 'react';
+import { createContext, createElement, useContext, useState, useSyncExternalStore, type ReactNode } from 'react';
 import type {
   AudioBand,
   DeviceHealth,
@@ -19,6 +19,7 @@ import type {
   Vec3,
   ViewId,
 } from '../types/voxel';
+import { t, tk } from '../i18n';
 import { EFFECT_DEFAULTS, KIND_META, MAX_LEDS, SCENARIOS } from '../services/catalog';
 import { channelKey, sensorIdOf } from '../services/sensors';
 import { loadAutosave, pickProject, PROJECT_KEYS, type ProjectData } from '../services/project';
@@ -136,64 +137,66 @@ const INITIAL_DEVICES: ESP32Device[] = [
   },
 ];
 
-const INITIAL_STRIPS: LEDStrip[] = ([
-  {
-    id: 'strip-nord',
-    name: 'Corniche Plafond Nord',
-    deviceId: 'esp-salon',
-    gpio: 2,
-    chipset: 'WS2815',
-    ledCount: 180,
-    shape: 'line',
-    start: [-3.5, 2.2, -2.5],
-    end: [3.5, 2.2, -2.5],
-    helixRadius: 0.5,
-    helixTurns: 6,
-    visible: true,
-  },
-  {
-    id: 'strip-ouest',
-    name: 'Corniche Plafond Ouest',
-    deviceId: 'esp-salon',
-    gpio: 4,
-    chipset: 'WS2815',
-    ledCount: 140,
-    shape: 'line',
-    start: [-3.5, 2.2, -2.5],
-    end: [-3.5, 2.2, 2.5],
-    helixRadius: 0.5,
-    helixTurns: 6,
-    visible: true,
-  },
-  {
-    id: 'strip-helix',
-    name: 'Suspension Hélicoïdale 3D',
-    deviceId: 'esp-plafond',
-    gpio: 16,
-    chipset: 'WS2811',
-    ledCount: 200,
-    shape: 'helix',
-    start: [0, 0.3, 0],
-    end: [0, 2.3, 0],
-    helixRadius: 0.45,
-    helixTurns: 7,
-    visible: true,
-  },
-  {
-    id: 'strip-plinthe',
-    name: 'Plinthe Sol Meuble TV',
-    deviceId: 'esp-salon',
-    gpio: 15,
-    chipset: 'WS2812B',
-    ledCount: 120,
-    shape: 'line',
-    start: [-2.8, 0.08, 2.4],
-    end: [2.8, 0.08, 2.4],
-    helixRadius: 0.5,
-    helixTurns: 6,
-    visible: true,
-  },
-] as const satisfies Parameters<typeof normalizeStrip>[0][]).map((x) => normalizeStrip({ ...x, start: [...x.start], end: [...x.end] }));
+const INITIAL_STRIPS: LEDStrip[] = (
+  [
+    {
+      id: 'strip-nord',
+      name: 'Corniche Plafond Nord',
+      deviceId: 'esp-salon',
+      gpio: 2,
+      chipset: 'WS2815',
+      ledCount: 180,
+      shape: 'line',
+      start: [-3.5, 2.2, -2.5],
+      end: [3.5, 2.2, -2.5],
+      helixRadius: 0.5,
+      helixTurns: 6,
+      visible: true,
+    },
+    {
+      id: 'strip-ouest',
+      name: 'Corniche Plafond Ouest',
+      deviceId: 'esp-salon',
+      gpio: 4,
+      chipset: 'WS2815',
+      ledCount: 140,
+      shape: 'line',
+      start: [-3.5, 2.2, -2.5],
+      end: [-3.5, 2.2, 2.5],
+      helixRadius: 0.5,
+      helixTurns: 6,
+      visible: true,
+    },
+    {
+      id: 'strip-helix',
+      name: 'Suspension Hélicoïdale 3D',
+      deviceId: 'esp-plafond',
+      gpio: 16,
+      chipset: 'WS2811',
+      ledCount: 200,
+      shape: 'helix',
+      start: [0, 0.3, 0],
+      end: [0, 2.3, 0],
+      helixRadius: 0.45,
+      helixTurns: 7,
+      visible: true,
+    },
+    {
+      id: 'strip-plinthe',
+      name: 'Plinthe Sol Meuble TV',
+      deviceId: 'esp-salon',
+      gpio: 15,
+      chipset: 'WS2812B',
+      ledCount: 120,
+      shape: 'line',
+      start: [-2.8, 0.08, 2.4],
+      end: [2.8, 0.08, 2.4],
+      helixRadius: 0.5,
+      helixTurns: 6,
+      visible: true,
+    },
+  ] as const satisfies Parameters<typeof normalizeStrip>[0][]
+).map((x) => normalizeStrip({ ...x, start: [...x.start], end: [...x.end] }));
 
 const sim = (patch: Partial<SensorNode['sim']> = {}): SensorNode['sim'] => ({
   mode: 'auto',
@@ -205,8 +208,8 @@ const sim = (patch: Partial<SensorNode['sim']> = {}): SensorNode['sim'] => ({
 
 const DEFAULT_BANDS: AudioBand[] = [
   { id: 'bass', label: 'Sub', lowHz: 40, highHz: 90, gain: 1.4, attackMs: 8, releaseMs: 140 },
-  { id: 'mid', label: 'Mid', lowHz: 300, highHz: 2000, gain: 2.2, attackMs: 20, releaseMs: 220 },
-  { id: 'high', label: 'High', lowHz: 4000, highHz: 12000, gain: 1.6, attackMs: 4, releaseMs: 90 },
+  { id: 'mid', label: tk('Mid'), lowHz: 300, highHz: 2000, gain: 2.2, attackMs: 20, releaseMs: 220 },
+  { id: 'high', label: tk('High'), lowHz: 4000, highHz: 12000, gain: 1.6, attackMs: 4, releaseMs: 90 },
 ];
 
 const INITIAL_SENSORS: SensorNode[] = [
@@ -270,12 +273,12 @@ const INITIAL_SENSORS: SensorNode[] = [
 
 const INITIAL_ROUTES: ModulationRoute[] = (
   [
-  { id: 'route-bass', source: 'mic-salon.bass', target: 'sphere_radius', curve: 'exp', amount: 0.85, bipolar: false, enabled: true },
-  { id: 'route-gps', source: 'gps-neo.speed', target: 'shader_speed', curve: 'linear', amount: 0.65, bipolar: false, enabled: true },
-  { id: 'route-high', source: 'mic-salon.high', target: 'color_shift', curve: 'scurve', amount: 0.45, bipolar: true, enabled: true },
-  { id: 'route-btn', source: 'btn-18.pressed', target: 'strobe_override', curve: 'step', amount: 1, bipolar: false, enabled: true },
-  { id: 'route-wave', source: 'mic-salon.bass', target: 'local_wave', curve: 'linear', amount: 1, bipolar: false, enabled: true },
-  { id: 'route-local', source: 'mic-salon.mid', target: 'local_intensity', curve: 'scurve', amount: 0.6, bipolar: false, enabled: true },
+    { id: 'route-bass', source: 'mic-salon.bass', target: 'sphere_radius', curve: 'exp', amount: 0.85, bipolar: false, enabled: true },
+    { id: 'route-gps', source: 'gps-neo.speed', target: 'shader_speed', curve: 'linear', amount: 0.65, bipolar: false, enabled: true },
+    { id: 'route-high', source: 'mic-salon.high', target: 'color_shift', curve: 'scurve', amount: 0.45, bipolar: true, enabled: true },
+    { id: 'route-btn', source: 'btn-18.pressed', target: 'strobe_override', curve: 'step', amount: 1, bipolar: false, enabled: true },
+    { id: 'route-wave', source: 'mic-salon.bass', target: 'local_wave', curve: 'linear', amount: 1, bipolar: false, enabled: true },
+    { id: 'route-local', source: 'mic-salon.mid', target: 'local_intensity', curve: 'scurve', amount: 0.6, bipolar: false, enabled: true },
   ] as Omit<ModulationRoute, keyof typeof ROUTE_DEFAULTS>[]
 ).map((r) => ({ ...ROUTE_DEFAULTS, ...r }));
 
@@ -323,7 +326,7 @@ function initialState(): VoxelState {
     scan: { active: false, bit: 0 },
     stats: EMPTY_STATS,
     blackout: false,
-    projectName: saved?.name ?? 'Untitled',
+    projectName: saved?.name ?? t('Untitled'),
     projectPath: saved?.path ?? null,
     dirty: saved?.dirty ?? false,
     health: {},
@@ -450,28 +453,28 @@ function createActions(store: VoxelStore) {
     newProject: () =>
       set(
         {
-        ...defaultProject(),
-        projectName: 'Untitled',
-        projectPath: null,
-        dirty: false,
-        selectedStripId: null,
-        selectedSensorId: null,
-        selectedRouteId: null,
-        sensorValues: {},
+          ...defaultProject(),
+          projectName: t('Untitled'),
+          projectPath: null,
+          dirty: false,
+          selectedStripId: null,
+          selectedSensorId: null,
+          selectedRouteId: null,
+          sensorValues: {},
         },
         { resetHistory: true },
       ),
     loadProject: (data: ProjectData, name: string, path: string | null) =>
       set(
         {
-        ...data,
-        projectName: name,
-        projectPath: path,
-        dirty: false,
-        selectedStripId: null,
-        selectedSensorId: null,
-        selectedRouteId: null,
-        sensorValues: {},
+          ...data,
+          projectName: name,
+          projectPath: path,
+          dirty: false,
+          selectedStripId: null,
+          selectedSensorId: null,
+          selectedRouteId: null,
+          sensorValues: {},
         },
         { resetHistory: true },
       ),
@@ -525,7 +528,7 @@ function createActions(store: VoxelStore) {
         const copy: LEDStrip = {
           ...src,
           id: uid('strip'),
-          name: `${src.name} copy`,
+          name: t('{name} copy', { name: src.name }),
           ledCount: Math.min(src.ledCount, free),
           start: shift(src.start),
           end: shift(src.end),
@@ -599,8 +602,7 @@ function createActions(store: VoxelStore) {
         selectedStripId: s.selectedStripId === id ? null : s.selectedStripId,
       })),
 
-    updateDevice: (id: string, patch: Partial<ESP32Device>) =>
-      set((s) => ({ devices: s.devices.map((d) => (d.id === id ? { ...d, ...patch } : d)) })),
+    updateDevice: (id: string, patch: Partial<ESP32Device>) => set((s) => ({ devices: s.devices.map((d) => (d.id === id ? { ...d, ...patch } : d)) })),
     addDevice: (device: ESP32Device) => set((s) => ({ devices: [...s.devices, device] })),
     /** Refuses while segments still output through the device; hosted sensors become unhosted. */
     removeDevice: (id: string): boolean => {
@@ -620,7 +622,7 @@ function createActions(store: VoxelStore) {
         const scenario = SCENARIOS[kind][0]?.value ?? 'electro';
         const sensor: SensorNode = {
           id: uid(kind),
-          name: `${KIND_META[kind].label} ${n}`,
+          name: `${t(KIND_META[kind].label)} ${n}`,
           kind,
           deviceId: null,
           source: 'sim',
@@ -629,13 +631,12 @@ function createActions(store: VoxelStore) {
           falloff: 'smooth',
           enabled: true,
           visible: true,
-          bands: kind === 'audio' ? DEFAULT_BANDS.map((b) => ({ ...b })) : [],
+          bands: kind === 'audio' ? DEFAULT_BANDS.map((b) => ({ ...b, label: t(b.label) })) : [],
           sim: sim({ mode: kind === 'gpio' ? 'manual' : 'auto', scenario }),
         };
         return { sensors: [...s.sensors, sensor], selectedSensorId: sensor.id, selectedStripId: null };
       }),
-    updateSensor: (id: string, patch: Partial<SensorNode>) =>
-      set((s) => ({ sensors: s.sensors.map((x) => (x.id === id ? { ...x, ...patch } : x)) })),
+    updateSensor: (id: string, patch: Partial<SensorNode>) => set((s) => ({ sensors: s.sensors.map((x) => (x.id === id ? { ...x, ...patch } : x)) })),
     /** Deleting a sensor also deletes the routes fed by its channels. */
     removeSensor: (id: string) =>
       set((s) => ({
@@ -656,19 +657,14 @@ function createActions(store: VoxelStore) {
           x.id === sensorId
             ? {
                 ...x,
-                bands: [
-                  ...x.bands,
-                  { id: uid('band'), label: `Band ${x.bands.length + 1}`, lowHz: 150, highHz: 400, gain: 1.5, attackMs: 15, releaseMs: 180 },
-                ],
+                bands: [...x.bands, { id: uid('band'), label: t('Band {n}', { n: x.bands.length + 1 }), lowHz: 150, highHz: 400, gain: 1.5, attackMs: 15, releaseMs: 180 }],
               }
             : x,
         ),
       })),
     updateBand: (sensorId: string, bandId: string, patch: Partial<AudioBand>) =>
       set((s) => ({
-        sensors: s.sensors.map((x) =>
-          x.id === sensorId ? { ...x, bands: x.bands.map((b) => (b.id === bandId ? { ...b, ...patch } : b)) } : x,
-        ),
+        sensors: s.sensors.map((x) => (x.id === sensorId ? { ...x, bands: x.bands.map((b) => (b.id === bandId ? { ...b, ...patch } : b)) } : x)),
       })),
     removeBand: (sensorId: string, bandId: string) =>
       set((s) => ({
@@ -679,13 +675,11 @@ function createActions(store: VoxelStore) {
     addGenerator: (kind: GeneratorKind) =>
       set((s) => {
         const n = s.generators.filter((g) => g.kind === kind).length + 1;
-        return { generators: [...s.generators, normalizeGenerator({ id: uid(kind), name: `${GENERATOR_META[kind].label} ${n}`, kind })] };
+        return { generators: [...s.generators, normalizeGenerator({ id: uid(kind), name: `${t(GENERATOR_META[kind].label)} ${n}`, kind })] };
       }),
-    updateGenerator: (id: string, patch: Partial<Generator>) =>
-      set((s) => ({ generators: s.generators.map((g) => (g.id === id ? { ...g, ...patch } : g)) })),
+    updateGenerator: (id: string, patch: Partial<Generator>) => set((s) => ({ generators: s.generators.map((g) => (g.id === id ? { ...g, ...patch } : g)) })),
     /** Live knob moves: no undo entry per step. */
-    setMacro: (id: string, value: number) =>
-      set((s) => ({ generators: s.generators.map((g) => (g.id === id ? { ...g, value } : g)) }), { transient: true }),
+    setMacro: (id: string, value: number) => set((s) => ({ generators: s.generators.map((g) => (g.id === id ? { ...g, value } : g)) }), { transient: true }),
     removeGenerator: (id: string) =>
       set((s) => {
         const rest = { ...s, generators: s.generators.filter((g) => g.id !== id) };
@@ -708,8 +702,7 @@ function createActions(store: VoxelStore) {
         };
         return { routes: [...s.routes, route], selectedRouteId: route.id };
       }),
-    updateRoute: (id: string, patch: Partial<ModulationRoute>) =>
-      set((s) => ({ routes: s.routes.map((r) => (r.id === id ? { ...r, ...patch } : r)) })),
+    updateRoute: (id: string, patch: Partial<ModulationRoute>) => set((s) => ({ routes: s.routes.map((r) => (r.id === id ? { ...r, ...patch } : r)) })),
     removeRoute: (id: string) =>
       set((s) => ({
         routes: s.routes.filter((r) => r.id !== id),
@@ -728,12 +721,11 @@ interface Ctx {
 const VoxelContext = createContext<Ctx | null>(null);
 
 export function VoxelProvider({ children }: { children: ReactNode }) {
-  const ref = useRef<Ctx | null>(null);
-  if (!ref.current) {
+  const [ctx] = useState<Ctx>(() => {
     const store = createVoxelStore();
-    ref.current = { store, actions: createActions(store) };
-  }
-  return createElement(VoxelContext.Provider, { value: ref.current }, children);
+    return { store, actions: createActions(store) };
+  });
+  return createElement(VoxelContext.Provider, { value: ctx }, children);
 }
 
 function useCtx(): Ctx {

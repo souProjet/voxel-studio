@@ -1,4 +1,5 @@
 import type { ESP32Device, LEDStrip, Vec3 } from '../types/voxel';
+import { t } from '../i18n';
 import { buildLayout } from './geometry';
 
 const f4 = (v: number) => v.toFixed(4);
@@ -89,7 +90,7 @@ export interface ParsedPoints {
  */
 export function parsePointsCsv(text: string): ParsedPoints {
   const lines = text.split(/\r?\n/).filter((l) => l.trim() !== '');
-  if (lines.length === 0) throw new Error('The file is empty.');
+  if (lines.length === 0) throw new Error(t('The file is empty.'));
   const delim = [',', ';', '\t'].map((d) => ({ d, n: lines[0].split(d).length })).sort((a, b) => b.n - a.n)[0].d;
   const split = (l: string) => l.split(delim).map((c) => c.trim().replace(/^"|"$/g, ''));
   const first = split(lines[0]);
@@ -105,14 +106,20 @@ export function parsePointsCsv(text: string): ParsedPoints {
   let skippedLines = 0;
   for (const line of lines.slice(hasHeader ? 1 : 0)) {
     const cells = split(line);
-    const nums = cols ? cols.map((i) => Number(cells[i])) : cells.filter((c) => c !== '').map(Number).filter((n) => !Number.isNaN(n)).slice(0, 3);
+    const nums = cols
+      ? cols.map((i) => Number(cells[i]))
+      : cells
+          .filter((c) => c !== '')
+          .map(Number)
+          .filter((n) => !Number.isNaN(n))
+          .slice(0, 3);
     if (nums.length < 3 || nums.some((n) => !Number.isFinite(n))) {
       skippedLines++;
       continue;
     }
     points.push([nums[0], nums[1], nums[2]]);
   }
-  if (points.length === 0) throw new Error('No x, y, z values found. Expected three numeric columns or a header with x, y, z.');
+  if (points.length === 0) throw new Error(t('No x, y, z values found. Expected three numeric columns or a header with x, y, z.'));
   const max = points.reduce((m, p) => Math.max(m, Math.abs(p[0]), Math.abs(p[1]), Math.abs(p[2])), 0);
   const convertedFromMm = max > 50;
   return {

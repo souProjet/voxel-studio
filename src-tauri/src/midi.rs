@@ -63,11 +63,7 @@ impl MidiHub {
             }
         };
         self.error = None;
-        let available: Vec<(String, midir::MidiInputPort)> = lister
-            .ports()
-            .into_iter()
-            .filter_map(|p| lister.port_name(&p).ok().map(|n| (n, p)))
-            .collect();
+        let available: Vec<(String, midir::MidiInputPort)> = lister.ports().into_iter().filter_map(|p| lister.port_name(&p).ok().map(|n| (n, p))).collect();
         self.connections.retain(|name, _| available.iter().any(|(n, _)| n == name));
         for (name, port) in available {
             if self.connections.contains_key(&name) {

@@ -1,4 +1,5 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
+import { t } from '../i18n';
 
 /**
  * DDP (Distributed Display Protocol) v1, as consumed by WLED on UDP 4048.
@@ -126,7 +127,10 @@ export async function openProjectFile(): Promise<(SavedFile & { contents: string
     input.onchange = () => {
       const file = input.files?.[0];
       if (!file) return resolve(null);
-      file.text().then((contents) => resolve({ name: file.name, path: null, contents }), () => resolve(null));
+      file.text().then(
+        (contents) => resolve({ name: file.name, path: null, contents }),
+        () => resolve(null),
+      );
     };
     input.oncancel = () => resolve(null);
     input.click();
@@ -159,7 +163,10 @@ export function pickTextFile(accept: string): Promise<{ name: string; contents: 
     input.onchange = () => {
       const file = input.files?.[0];
       if (!file) return resolve(null);
-      file.text().then((contents) => resolve({ name: file.name, contents }), () => resolve(null));
+      file.text().then(
+        (contents) => resolve({ name: file.name, contents }),
+        () => resolve(null),
+      );
     };
     input.oncancel = () => resolve(null);
     input.click();
@@ -237,7 +244,7 @@ export interface InputsSnapshot {
 /** UDP listeners and MIDI ports live in Rust; the browser build cannot open sockets. */
 export function configureInputs(oscPort: number | null, wledSync: boolean, midi: boolean): Promise<InputsStatus> {
   if (bridgeMode !== 'native') {
-    const unavailable = 'Needs the desktop app (browsers cannot listen on UDP).';
+    const unavailable = t('Needs the desktop app (browsers cannot listen on UDP).');
     return Promise.resolve({
       oscPort: null,
       oscError: oscPort === null ? null : unavailable,

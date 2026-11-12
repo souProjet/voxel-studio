@@ -6,6 +6,7 @@ import type { SensorNode, Vec3 } from '../../types/voxel';
 import { KIND_META, MAX_LEDS, ROOM, SHADER_PRESETS } from '../../services/catalog';
 import { runtime } from '../../services/engine';
 import { sensorChannels } from '../../services/sensors';
+import { t } from '../../i18n';
 
 const LED_FLOOR = 0.045;
 /** Ray-to-handle distance that grabs a handle, in meters. */
@@ -51,10 +52,7 @@ function buildSensorGizmo(x: SensorNode): SensorGizmo {
   const color = new THREE.Color(KIND_META[x.kind].color);
   const group = new THREE.Group();
   group.position.set(x.position[0], x.position[1], x.position[2]);
-  const core = new THREE.Mesh(
-    new THREE.OctahedronGeometry(0.07),
-    new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: x.enabled ? 1 : 0.35 }),
-  );
+  const core = new THREE.Mesh(new THREE.OctahedronGeometry(0.07), new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: x.enabled ? 1 : 0.35 }));
   core.renderOrder = 12;
   const halo = new THREE.LineSegments(
     new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(1, 2)),
@@ -127,10 +125,7 @@ export function ThreeVoxelCanvas() {
     axes.setColors(new THREE.Color(0xef4444), new THREE.Color(0x22c55e), new THREE.Color(0x3b82f6));
     (axes.material as THREE.LineBasicMaterial).depthTest = false;
     axes.renderOrder = 10;
-    const core = new THREE.Mesh(
-      new THREE.OctahedronGeometry(0.045),
-      new THREE.MeshBasicMaterial({ color: 0x06b6d4, depthTest: false }),
-    );
+    const core = new THREE.Mesh(new THREE.OctahedronGeometry(0.045), new THREE.MeshBasicMaterial({ color: 0x06b6d4, depthTest: false }));
     core.renderOrder = 11;
     gizmo.add(axes, core);
     scene.add(gizmo);
@@ -372,8 +367,8 @@ export function ThreeVoxelCanvas() {
       goal.radius = Math.max(2, box.getSize(tmp).length() * 1.6);
     };
     const onKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement;
-      if (!host.clientWidth || t.tagName === 'INPUT' || t.tagName === 'SELECT' || e.metaKey || e.ctrlKey) return;
+      const target = e.target as HTMLElement;
+      if (!host.clientWidth || target.tagName === 'INPUT' || target.tagName === 'SELECT' || e.metaKey || e.ctrlKey) return;
       if (e.key.toLowerCase() === 'f') commandRef.current({ kind: 'focus' });
     };
     window.addEventListener('keydown', onKey);
@@ -472,7 +467,7 @@ export function ThreeVoxelCanvas() {
       <ViewPresets onCommand={(c) => commandRef.current(c)} />
       <span ref={camRef} className="pointer-events-none absolute right-3 top-3 font-mono text-[10px] text-zinc-600" />
       <span className="pointer-events-none absolute bottom-2 right-3 text-[10px] text-zinc-600">
-        Drag orbit · Shift/Right drag pan · Wheel zoom · Drag handles to move (Alt vertical, Cmd grid) · F focus
+        {t('Drag orbit · Shift/Right drag pan · Wheel zoom · Drag handles to move (Alt vertical, Cmd grid) · F focus')}
       </span>
     </div>
   );
@@ -489,14 +484,14 @@ function ShaderPill() {
           <button
             key={p.id}
             type="button"
-            title={p.description}
+            title={t(p.description)}
             onClick={() => setShader(p.id)}
             className={`flex h-6 items-center gap-1.5 rounded-full px-3 font-mono text-[10px] tracking-wider transition-colors ${
               on ? 'bg-spatial/15 text-spatial' : 'text-zinc-500 hover:text-zinc-200'
             }`}
           >
             <span className="text-zinc-600">{String(i + 1).padStart(2, '0')}</span>
-            {p.short}
+            {t(p.short)}
           </button>
         );
       })}
@@ -522,18 +517,18 @@ function ViewportToggles() {
   );
   return (
     <div className="absolute left-3 top-3 flex gap-1">
-      {btn(showRoom, () => toggle('showRoom'), 'Room', Box)}
-      {btn(showSphere, () => toggle('showSphere'), 'Sphere', Globe)}
+      {btn(showRoom, () => toggle('showRoom'), t('Room'), Box)}
+      {btn(showSphere, () => toggle('showSphere'), t('Sphere'), Globe)}
     </div>
   );
 }
 
 function ViewPresets({ onCommand }: { onCommand: (c: ViewCommand) => void }) {
   const views: { preset: ViewPreset; label: string }[] = [
-    { preset: 'persp', label: 'Persp' },
-    { preset: 'top', label: 'Top' },
-    { preset: 'front', label: 'Front' },
-    { preset: 'side', label: 'Side' },
+    { preset: 'persp', label: t('Persp') },
+    { preset: 'top', label: t('Top') },
+    { preset: 'front', label: t('Front') },
+    { preset: 'side', label: t('Side') },
   ];
   return (
     <div className="absolute bottom-2 left-3 flex items-center gap-0.5 rounded-[5px] border border-line bg-panel/90 p-0.5">
@@ -551,10 +546,10 @@ function ViewPresets({ onCommand }: { onCommand: (c: ViewCommand) => void }) {
       <button
         type="button"
         onClick={() => onCommand({ kind: 'focus' })}
-        title="Frame the selection (F)"
+        title={t('Frame the selection (F)')}
         className="flex h-5 items-center gap-1 rounded-[3px] px-2 text-[10px] text-zinc-400 hover:bg-card hover:text-zinc-100"
       >
-        <Focus size={10} /> Focus
+        <Focus size={10} /> {t('Focus')}
       </button>
     </div>
   );

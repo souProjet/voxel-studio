@@ -1,4 +1,5 @@
 import type { ChannelKey, SensorChannel, SensorKind, SensorNode, SensorSourceId, SimScenario } from '../types/voxel';
+import { t, tk } from '../i18n';
 import { inputs, OSC_PORT } from './inputs';
 
 /* ------------------------------------------------------------------ */
@@ -68,11 +69,11 @@ export function sensorChannels(s: SensorNode): SensorChannel[] {
     case 'audio':
       return s.bands.map((b) => ch(b.id, b.label, '', 0, 1));
     case 'gps':
-      return [ch('speed', 'Speed', 'km/h', 0, 160)];
+      return [ch('speed', tk('Speed'), 'km/h', 0, 160)];
     case 'gpio':
-      return [ch('pressed', 'Pressed', '', 0, 1)];
+      return [ch('pressed', tk('Pressed'), '', 0, 1)];
     case 'gyro':
-      return [ch('pitch', 'Pitch', '°', -90, 90)];
+      return [ch('pitch', tk('Pitch'), '°', -90, 90)];
   }
 }
 
@@ -159,8 +160,8 @@ function cityProfile(t: number): number {
 
 const simulatorSource: SensorSource = {
   id: 'sim',
-  label: 'Simulator',
-  description: 'Synthetic signals generated locally: musical spectra, driving profiles, IMU sway, or manual values.',
+  label: tk('Simulator'),
+  description: tk('Synthetic signals generated locally: musical spectra, driving profiles, IMU sway, or manual values.'),
   kinds: ['audio', 'gps', 'gpio', 'gyro'],
   open(getSensor) {
     let seed = 0;
@@ -207,7 +208,7 @@ const binEdges = (i: number): [number, number] => [binFrequency(i - 0.5), binFre
 const micSource: SensorSource = {
   id: 'mic',
   label: 'Microphone',
-  description: 'Default audio input of this computer, analyzed with a 4096-point FFT. The system asks for permission the first time.',
+  description: tk('Default audio input of this computer, analyzed with a 4096-point FFT. The system asks for permission the first time.'),
   kinds: ['audio'],
   open(getSensor) {
     const id = getSensor().id;
@@ -217,9 +218,9 @@ const micSource: SensorSource = {
     let stream: MediaStream | null = null;
     let data = new Uint8Array(0);
     let disposed = false;
-    sourceStatus.set(id, { text: 'Requesting microphone access…', ok: false });
+    sourceStatus.set(id, { text: t('Requesting microphone access…'), ok: false });
     if (!navigator.mediaDevices?.getUserMedia) {
-      sourceStatus.set(id, { text: 'No audio capture API in this webview.', ok: false });
+      sourceStatus.set(id, { text: t('No audio capture API in this webview.'), ok: false });
     } else {
       navigator.mediaDevices
         .getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } })
@@ -235,10 +236,10 @@ const micSource: SensorSource = {
           analyser.maxDecibels = -20;
           ctx.createMediaStreamSource(s).connect(analyser);
           data = new Uint8Array(analyser.frequencyBinCount);
-          sourceStatus.set(id, { text: `Live: ${s.getAudioTracks()[0]?.label || 'default input'}`, ok: true });
+          sourceStatus.set(id, { text: t('Live: {label}', { label: s.getAudioTracks()[0]?.label || t('default input') }), ok: true });
         })
         .catch((e: unknown) => {
-          if (!disposed) sourceStatus.set(id, { text: `Microphone unavailable: ${e instanceof Error ? e.message : String(e)}`, ok: false });
+          if (!disposed) sourceStatus.set(id, { text: t('Microphone unavailable: {error}', { error: e instanceof Error ? e.message : String(e) }), ok: false });
         });
     }
     return {
@@ -268,15 +269,29 @@ const micSource: SensorSource = {
 
 /** WLED GEQ channel ranges in Hz (audio_reactive.cpp, 22050 Hz mapping). */
 const WLED_GEQ_HZ: [number, number][] = [
-  [43, 86], [86, 129], [129, 216], [216, 301], [301, 430], [430, 560], [560, 818], [818, 1120],
-  [1120, 1421], [1421, 1895], [1895, 2412], [2412, 3015], [3015, 3704], [3704, 4479], [4479, 7106], [7106, 9259],
+  [43, 86],
+  [86, 129],
+  [129, 216],
+  [216, 301],
+  [301, 430],
+  [430, 560],
+  [560, 818],
+  [818, 1120],
+  [1120, 1421],
+  [1421, 1895],
+  [1895, 2412],
+  [2412, 3015],
+  [3015, 3704],
+  [3704, 4479],
+  [4479, 7106],
+  [7106, 9259],
 ];
 const WLED_BAND_OF_BIN = BIN_HZ.map((hz) => (hz < 43 ? 0 : WLED_GEQ_HZ.findIndex(([lo, hi]) => hz >= lo && hz < hi)));
 
 const wledSyncSource: SensorSource = {
   id: 'wled-sync',
-  label: 'WLED audio sync',
-  description: 'Spectrum sent by a WLED controller with a microphone (Sound Reactive, Sync: Send). Multicast 239.0.0.1:11988, sync format v2.',
+  label: tk('WLED audio sync'),
+  description: tk('Spectrum sent by a WLED controller with a microphone (Sound Reactive, Sync: Send). Multicast 239.0.0.1:11988, sync format v2.'),
   kinds: ['audio'],
   open(getSensor) {
     const id = getSensor().id;
@@ -286,10 +301,10 @@ const wledSyncSource: SensorSource = {
         const w = inputs.wled;
         const err = inputs.status.wledError;
         if (!w || w.ageMs > 1000) {
-          sourceStatus.set(id, { text: err ?? 'Waiting for WLED audio sync packets on 239.0.0.1:11988…', ok: false });
+          sourceStatus.set(id, { text: err ?? t('Waiting for WLED audio sync packets on 239.0.0.1:11988…'), ok: false });
           return { spectrum: spectrum.fill(0) };
         }
-        sourceStatus.set(id, { text: `Live: ${w.ageMs} ms old`, ok: true });
+        sourceStatus.set(id, { text: t('Live: {age} ms old', { age: w.ageMs }), ok: true });
         for (let i = 0; i < SPECTRUM_BINS; i++) {
           const band = WLED_BAND_OF_BIN[i];
           spectrum[i] = band < 0 ? 0 : w.fft[band] / 255;
@@ -309,7 +324,7 @@ export const oscAddressOf = (sensorId: string, channelId: string) => `/voxel/${s
 const oscSource: SensorSource = {
   id: 'osc',
   label: 'OSC',
-  description: `Values in the channel unit, sent over OSC (UDP ${OSC_PORT}) by the sensor's ESP32 or any OSC app, one address per channel.`,
+  description: tk("Values in the channel unit, sent over OSC (UDP 9000) by the sensor's ESP32 or any OSC app, one address per channel."),
   kinds: ['audio', 'gps', 'gpio', 'gyro'],
   open(getSensor) {
     const id = getSensor().id;
@@ -326,7 +341,14 @@ const oscSource: SensorSource = {
           }
         }
         const err = inputs.status.oscError;
-        sourceStatus.set(id, err ? { text: err, ok: false } : any ? { text: `Receiving on UDP ${OSC_PORT}`, ok: true } : { text: `Listening on UDP ${OSC_PORT}, nothing received yet`, ok: false });
+        sourceStatus.set(
+          id,
+          err
+            ? { text: err, ok: false }
+            : any
+              ? { text: t('Receiving on UDP {port}', { port: OSC_PORT }), ok: true }
+              : { text: t('Listening on UDP {port}, nothing received yet', { port: OSC_PORT }), ok: false },
+        );
         return { values };
       },
       dispose() {

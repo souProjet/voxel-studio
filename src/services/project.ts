@@ -3,6 +3,7 @@ import { EFFECT_DEFAULTS, SHADER_PRESETS } from './catalog';
 import { normalizeStrip } from './geometry';
 import { normalizeGenerator, ROUTE_DEFAULTS } from './generators';
 import type { VoxelStore } from '../state/useVoxelStore';
+import { t } from '../i18n';
 
 export const PROJECT_FORMAT = 'voxel-studio';
 export const PROJECT_VERSION = 1;
@@ -58,30 +59,31 @@ export function parseProject(text: string): ProjectData {
   try {
     raw = JSON.parse(text);
   } catch {
-    throw new Error('Not a JSON file.');
+    throw new Error(t('Not a JSON file.'));
   }
   const f = raw as Partial<ProjectFile>;
-  if (!f || typeof f !== 'object' || f.format !== PROJECT_FORMAT) throw new Error('Not a VOXEL // STUDIO project.');
+  if (!f || typeof f !== 'object' || f.format !== PROJECT_FORMAT) throw new Error(t('Not a VOXEL // STUDIO project.'));
   if (typeof f.version !== 'number' || f.version > PROJECT_VERSION) {
-    throw new Error(`Project version ${String(f.version)} is newer than this app supports (${PROJECT_VERSION}).`);
+    throw new Error(t('Project version {version} is newer than this app supports ({supported}).', { version: String(f.version), supported: PROJECT_VERSION }));
   }
   if (!isArray(f.strips) || !isArray(f.devices) || !isArray(f.routes) || !isArray(f.sensors)) {
-    throw new Error('Project is missing strips, devices, routes or sensors.');
+    throw new Error(t('Project is missing strips, devices, routes or sensors.'));
   }
   for (const s of f.strips as LEDStrip[]) {
     if (typeof s.id !== 'string' || !isVec3(s.start) || !isVec3(s.end) || !(s.ledCount > 0)) {
-      throw new Error(`Invalid LED segment "${String(s.name ?? s.id)}".`);
+      throw new Error(t('Invalid LED segment "{name}".', { name: String(s.name ?? s.id) }));
     }
   }
   for (const s of f.sensors as SensorNode[]) {
-    if (typeof s.id !== 'string' || !isVec3(s.position)) throw new Error(`Invalid sensor "${String(s.name ?? s.id)}".`);
+    if (typeof s.id !== 'string' || !isVec3(s.position)) throw new Error(t('Invalid sensor "{name}".', { name: String(s.name ?? s.id) }));
   }
   const p = f.params;
-  if (!p || !isVec3(p.origin)) throw new Error('Project effect parameters are invalid.');
-  if (!SHADER_PRESETS.some((x) => x.id === f.shader)) throw new Error(`Unknown shader "${String(f.shader)}".`);
+  if (!p || !isVec3(p.origin)) throw new Error(t('Project effect parameters are invalid.'));
+  if (!SHADER_PRESETS.some((x) => x.id === f.shader)) throw new Error(t('Unknown shader "{name}".', { name: String(f.shader) }));
   const generators = isArray(f.generators) ? (f.generators as Generator[]) : [];
   for (const g of generators) {
-    if (typeof g.id !== 'string' || !['lfo', 'envelope', 'macro', 'osc', 'midi'].includes(g.kind)) throw new Error(`Invalid generator "${String(g.name ?? g.id)}".`);
+    if (typeof g.id !== 'string' || !['lfo', 'envelope', 'macro', 'osc', 'midi'].includes(g.kind))
+      throw new Error(t('Invalid generator "{name}".', { name: String(g.name ?? g.id) }));
   }
   // Files saved before newer fields existed get their defaults.
   return pickProject({
@@ -109,7 +111,7 @@ export function loadAutosave(): AutosaveEntry | null {
     if (typeof entry.file !== 'string') return null;
     return {
       data: parseProject(entry.file),
-      name: typeof entry.name === 'string' ? entry.name : 'Untitled',
+      name: typeof entry.name === 'string' ? entry.name : t('Untitled'),
       path: typeof entry.path === 'string' ? entry.path : null,
       dirty: entry.dirty === true,
     };
@@ -132,8 +134,7 @@ export function startAutosave(store: VoxelStore): () => void {
   let prev = store.getState();
   const unsubscribe = store.subscribe(() => {
     const s = store.getState();
-    const changed =
-      PROJECT_KEYS.some((k) => s[k] !== prev[k]) || s.projectName !== prev.projectName || s.projectPath !== prev.projectPath || s.dirty !== prev.dirty;
+    const changed = PROJECT_KEYS.some((k) => s[k] !== prev[k]) || s.projectName !== prev.projectName || s.projectPath !== prev.projectPath || s.dirty !== prev.dirty;
     prev = s;
     if (!changed) return;
     window.clearTimeout(timer);

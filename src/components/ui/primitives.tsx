@@ -63,10 +63,7 @@ export function Toggle({ checked, onChange, color = '#06B6D4', title }: { checke
       className="relative h-4 w-7 shrink-0 rounded-full border border-line bg-inset transition-colors"
       style={checked ? { background: `${color}26`, borderColor: `${color}80` } : undefined}
     >
-      <span
-        className="absolute top-[2px] h-2.5 w-2.5 rounded-full transition-all"
-        style={{ left: checked ? 13 : 2, background: checked ? color : '#52525b' }}
-      />
+      <span className="absolute top-[2px] h-2.5 w-2.5 rounded-full transition-all" style={{ left: checked ? 13 : 2, background: checked ? color : '#52525b' }} />
     </button>
   );
 }

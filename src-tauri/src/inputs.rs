@@ -130,7 +130,11 @@ pub fn parse_wled_sync(buf: &[u8]) -> Option<WledAudio> {
     let volume = f32::from_le_bytes(take::<4>(buf, 12)?);
     let mut fft = [0u8; 16];
     fft.copy_from_slice(buf.get(18..34)?);
-    Some(WledAudio { fft, volume: if volume.is_finite() { volume.max(0.0) } else { 0.0 }, peak: buf[16] > 0 })
+    Some(WledAudio {
+        fft,
+        volume: if volume.is_finite() { volume.max(0.0) } else { 0.0 },
+        peak: buf[16] > 0,
+    })
 }
 
 /* ------------------------------------------------------------------ */
@@ -187,7 +191,11 @@ impl Listener {
                 }
             }
         })?;
-        Ok(Self { port, stop, handle: Some(handle) })
+        Ok(Self {
+            port,
+            stop,
+            handle: Some(handle),
+        })
     }
 }
 
@@ -356,7 +364,10 @@ mod tests {
         parse_osc(&osc_msg("/a", ",i", &7i32.to_be_bytes()), &mut out);
         parse_osc(&osc_msg("/b", ",T", &[]), &mut out);
         parse_osc(&osc_msg("/c", ",sf", &[b'h', b'i', 0, 0, 0x3f, 0x80, 0, 0]), &mut out);
-        assert_eq!(out, vec![("/voxel/fader".into(), 0.25), ("/a".into(), 7.0), ("/b".into(), 1.0), ("/c".into(), 1.0)]);
+        assert_eq!(
+            out,
+            vec![("/voxel/fader".into(), 0.25), ("/a".into(), 7.0), ("/b".into(), 1.0), ("/c".into(), 1.0)]
+        );
     }
 
     #[test]
@@ -374,7 +385,12 @@ mod tests {
     #[test]
     fn malformed_packets_are_ignored() {
         let mut out = Vec::new();
-        for pkt in [&b""[..], b"/no-terminator", b"#bundle\0\0\0\0\0\0\0\0\0\x7f\xff\xff\xff", b"noslash\0,f\0\0\0\0\0\0"] {
+        for pkt in [
+            &b""[..],
+            b"/no-terminator",
+            b"#bundle\0\0\0\0\0\0\0\0\0\x7f\xff\xff\xff",
+            b"noslash\0,f\0\0\0\0\0\0",
+        ] {
             parse_osc(pkt, &mut out);
         }
         parse_osc(&osc_msg("/short", ",f", &[0x3f]), &mut out);

@@ -5,6 +5,7 @@ import { useVoxel, useVoxelActions, useVoxelStoreRef } from '../../state/useVoxe
 import { ROOM, SHADER_PRESETS } from '../../services/catalog';
 import { runtime } from '../../services/engine';
 import { Segmented } from '../ui/primitives';
+import { t, tk } from '../../i18n';
 
 type Form = 'tablet' | 'phone';
 
@@ -16,10 +17,10 @@ interface LivePreset {
 }
 
 const PRESETS: LivePreset[] = [
-  { name: 'Pulse', shader: 'spherical_wave', params: { radius: 1.4, speed: 1, hueShift: 0 }, color: '#06B6D4' },
-  { name: 'Plasma', shader: 'perlin_plasma', params: { radius: 1.8, speed: 0.8, hueShift: 0.3 }, color: '#D946EF' },
-  { name: 'Laser', shader: 'laser_plane', params: { radius: 1, speed: 1.6, hueShift: 0 }, color: '#10B981' },
-  { name: 'Ambient', shader: 'height_spectrum', params: { radius: 1.2, speed: 0.35, hueShift: 0.55 }, color: '#F59E0B' },
+  { name: tk('Pulse'), shader: 'spherical_wave', params: { radius: 1.4, speed: 1, hueShift: 0 }, color: '#06B6D4' },
+  { name: tk('Plasma'), shader: 'perlin_plasma', params: { radius: 1.8, speed: 0.8, hueShift: 0.3 }, color: '#D946EF' },
+  { name: tk('Laser'), shader: 'laser_plane', params: { radius: 1, speed: 1.6, hueShift: 0 }, color: '#10B981' },
+  { name: tk('Ambient'), shader: 'height_spectrum', params: { radius: 1.2, speed: 0.35, hueShift: 0.55 }, color: '#F59E0B' },
 ];
 
 const HALF_W = ROOM.width / 2;
@@ -38,7 +39,8 @@ function SpatialPad() {
     const draw = () => {
       raf = requestAnimationFrame(draw);
       const dpr = Math.min(window.devicePixelRatio, 2);
-      const w = canvas.clientWidth, h = canvas.clientHeight;
+      const w = canvas.clientWidth,
+        h = canvas.clientHeight;
       if (!w) return;
       if (canvas.width !== Math.round(w * dpr)) {
         canvas.width = Math.round(w * dpr);
@@ -89,8 +91,10 @@ function SpatialPad() {
       ctx.setLineDash([]);
       ctx.strokeStyle = 'rgba(6,182,212,0.35)';
       ctx.beginPath();
-      ctx.moveTo(ox, 0); ctx.lineTo(ox, h);
-      ctx.moveTo(0, oy); ctx.lineTo(w, oy);
+      ctx.moveTo(ox, 0);
+      ctx.lineTo(ox, h);
+      ctx.moveTo(0, oy);
+      ctx.lineTo(w, oy);
       ctx.stroke();
       ctx.fillStyle = '#06B6D4';
       ctx.beginPath();
@@ -148,7 +152,7 @@ function Fader({
   readout: string;
   vertical?: boolean;
 }) {
-  const t = Math.max(0, Math.min(1, (value - min) / (max - min)));
+  const frac = Math.max(0, Math.min(1, (value - min) / (max - min)));
   const set = (e: PointerEvent<HTMLDivElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
     const k = vertical ? 1 - (e.clientY - r.top) / r.height : (e.clientX - r.left) / r.width;
@@ -172,8 +176,8 @@ function Fader({
           className="absolute"
           style={
             vertical
-              ? { left: 0, right: 0, bottom: 0, height: `${t * 100}%`, background: `${color}33`, borderTop: `2px solid ${color}` }
-              : { top: 0, bottom: 0, left: 0, width: `${t * 100}%`, background: `${color}33`, borderRight: `2px solid ${color}` }
+              ? { left: 0, right: 0, bottom: 0, height: `${frac * 100}%`, background: `${color}33`, borderTop: `2px solid ${color}` }
+              : { top: 0, bottom: 0, left: 0, width: `${frac * 100}%`, background: `${color}33`, borderRight: `2px solid ${color}` }
           }
         />
       </div>
@@ -202,7 +206,7 @@ function StrobeButton({ big }: { big?: boolean }) {
       }`}
     >
       <Zap size={16} />
-      HOLD STROBE
+      {t('HOLD STROBE')}
     </button>
   );
 }
@@ -254,9 +258,9 @@ function PresetGrid() {
             style={{ borderColor: on ? p.color : '#27272a', boxShadow: on ? `inset 0 0 0 1px ${p.color}55` : undefined }}
           >
             <span className="text-[12px] font-medium" style={{ color: on ? p.color : '#e4e4e7' }}>
-              {p.name}
+              {t(p.name)}
             </span>
-            <span className="font-mono text-[9px] text-zinc-500">{SHADER_PRESETS.find((s) => s.id === p.shader)?.short}</span>
+            <span className="font-mono text-[9px] text-zinc-500">{t(SHADER_PRESETS.find((s) => s.id === p.shader)?.short ?? '')}</span>
           </button>
         );
       })}
@@ -271,7 +275,7 @@ function PadSurface({ form }: { form: Form }) {
   const bright = (
     <Fader
       vertical={form === 'tablet'}
-      label="Master"
+      label={t('Master')}
       color="#E4E4E7"
       value={params.masterBrightness}
       onChange={(masterBrightness) => setParams({ masterBrightness })}
@@ -281,7 +285,7 @@ function PadSurface({ form }: { form: Form }) {
   const height = (
     <Fader
       vertical={form === 'tablet'}
-      label="Height Y"
+      label={t('Height Y')}
       color="#22C55E"
       min={0}
       max={ROOM.height}
@@ -346,23 +350,20 @@ function PadSurface({ form }: { form: Form }) {
 
 export function LiveControlPad() {
   const [form, setForm] = useState<Form>('tablet');
-  const frame =
-    form === 'tablet'
-      ? { width: 'min(100%, 1060px)', aspectRatio: '1.5 / 1', radius: 28 }
-      : { width: 'min(100%, 390px)', aspectRatio: '390 / 820', radius: 44 };
+  const frame = form === 'tablet' ? { width: 'min(100%, 1060px)', aspectRatio: '1.5 / 1', radius: 28 } : { width: 'min(100%, 390px)', aspectRatio: '390 / 820', radius: 44 };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col items-center gap-4 overflow-auto p-5">
       <div className="flex w-full max-w-[1060px] items-center gap-3">
-        <span className="text-[13px] font-medium text-zinc-200">Live Control Pad</span>
-        <span className="text-[11px] text-zinc-500">Touch surface preview. Drives the same state as the Studio viewport.</span>
+        <span className="text-[13px] font-medium text-zinc-200">{t('Live Control Pad')}</span>
+        <span className="text-[11px] text-zinc-500">{t('Touch surface preview. Drives the same state as the Studio viewport.')}</span>
         <Segmented<Form>
           className="ml-auto w-[240px]"
           value={form}
           onChange={setForm}
           options={[
-            { value: 'tablet', label: 'Tablet', icon: Tablet },
-            { value: 'phone', label: 'Phone', icon: Smartphone },
+            { value: 'tablet', label: t('Tablet'), icon: Tablet },
+            { value: 'phone', label: t('Phone'), icon: Smartphone },
           ]}
         />
       </div>

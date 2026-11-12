@@ -182,7 +182,9 @@ export function startEngine(store: VoxelStore): () => void {
         } else if (strobe >= 0) {
           colors[k] = colors[k + 1] = colors[k + 2] = strobe * gain;
         } else {
-          const x = pos[k], y = pos[k + 1], z = pos[k + 2];
+          const x = pos[k],
+            y = pos[k + 1],
+            z = pos[k + 2];
           shadeInto(colors, k, s.shader, x, y, z, runtime.phase, params);
           if (fade) {
             shadeInto(fadeRgb, 0, fade, x, y, z, runtime.phase, params);
@@ -193,7 +195,9 @@ export function startEngine(store: VoxelStore): () => void {
           let mul = 1;
           let add = 0;
           for (const f of fields) {
-            const dx = x - f.x, dy = y - f.y, dz = z - f.z;
+            const dx = x - f.x,
+              dy = y - f.y,
+              dz = z - f.z;
             const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
             if (f.wave) {
               if (d < f.radius) {

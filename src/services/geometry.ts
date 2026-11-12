@@ -64,7 +64,9 @@ function shapePositions(s: LEDStrip, n: number): Float32Array {
   };
   const tOf = (i: number) => (n > 1 ? i / (n - 1) : 0.5);
   const [sx, sy, sz] = s.start;
-  const ax = s.end[0] - sx, ay = s.end[1] - sy, az = s.end[2] - sz;
+  const ax = s.end[0] - sx,
+    ay = s.end[1] - sy,
+    az = s.end[2] - sz;
 
   switch (s.shape) {
     case 'line':
@@ -76,16 +78,25 @@ function shapePositions(s: LEDStrip, n: number): Float32Array {
 
     case 'helix': {
       const len = Math.hypot(ax, ay, az) || 1;
-      const dx = ax / len, dy = ay / len, dz = az / len;
+      const dx = ax / len,
+        dy = ay / len,
+        dz = az / len;
       const [rx, ry, rz] = Math.abs(dy) > 0.9 ? [1, 0, 0] : [0, 1, 0];
-      let ux = dy * rz - dz * ry, uy = dz * rx - dx * rz, uz = dx * ry - dy * rx;
+      let ux = dy * rz - dz * ry,
+        uy = dz * rx - dx * rz,
+        uz = dx * ry - dy * rx;
       const ul = Math.hypot(ux, uy, uz) || 1;
-      ux /= ul; uy /= ul; uz /= ul;
-      const vx = dy * uz - dz * uy, vy = dz * ux - dx * uz, vz = dx * uy - dy * ux;
+      ux /= ul;
+      uy /= ul;
+      uz /= ul;
+      const vx = dy * uz - dz * uy,
+        vy = dz * ux - dx * uz,
+        vz = dx * uy - dy * ux;
       for (let i = 0; i < n; i++) {
         const t = tOf(i);
         const a = t * s.helixTurns * Math.PI * 2;
-        const c = Math.cos(a) * s.helixRadius, si = Math.sin(a) * s.helixRadius;
+        const c = Math.cos(a) * s.helixRadius,
+          si = Math.sin(a) * s.helixRadius;
         put(i, sx + ax * t + ux * c + vx * si, sy + ay * t + uy * c + vy * si, sz + az * t + uz * c + vz * si);
       }
       break;
@@ -106,7 +117,8 @@ function shapePositions(s: LEDStrip, n: number): Float32Array {
         const target = tOf(i) * total;
         while (k < seg.length - 1 && acc + seg[k] < target) acc += seg[k++];
         const f = seg[k] > 0 ? Math.min(1, (target - acc) / seg[k]) : 0;
-        const p = v[k], q = v[k + 1];
+        const p = v[k],
+          q = v[k + 1];
         put(i, p[0] + (q[0] - p[0]) * f, p[1] + (q[1] - p[1]) * f, p[2] + (q[2] - p[2]) * f);
       }
       break;
@@ -118,7 +130,8 @@ function shapePositions(s: LEDStrip, n: number): Float32Array {
       for (let i = 0; i < n; i++) {
         const t = full ? i / Math.max(n, 1) : tOf(i);
         const a = ((s.arcStartDeg + t * s.arcSweepDeg) * Math.PI) / 180;
-        const c = Math.cos(a) * r, si = Math.sin(a) * r;
+        const c = Math.cos(a) * r,
+          si = Math.sin(a) * r;
         if (s.arcAxis === 'y') put(i, sx + c, sy, sz + si);
         else if (s.arcAxis === 'x') put(i, sx, sy + c, sz + si);
         else put(i, sx + c, sy + si, sz);
@@ -132,7 +145,8 @@ function shapePositions(s: LEDStrip, n: number): Float32Array {
       const flat = Math.abs(ay) < 1e-6;
       const u: Vec3 = flat ? [ax, 0, 0] : [ax, 0, az];
       const w: Vec3 = flat ? [0, 0, az] : [0, ay, 0];
-      const cols = Math.max(1, s.matrixCols), rows = Math.max(1, s.matrixRows);
+      const cols = Math.max(1, s.matrixCols),
+        rows = Math.max(1, s.matrixRows);
       for (let i = 0; i < n; i++) {
         const row = Math.floor(i / cols);
         let col = i % cols;

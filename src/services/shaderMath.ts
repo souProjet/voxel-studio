@@ -16,12 +16,36 @@ export function hsvInto(out: Float32Array | number[], o: number, h: number, s: n
   const t = v * (1 - s * (1 - f));
   let r: number, g: number, b: number;
   switch (i) {
-    case 0: r = v; g = t; b = p; break;
-    case 1: r = q; g = v; b = p; break;
-    case 2: r = p; g = v; b = t; break;
-    case 3: r = p; g = q; b = v; break;
-    case 4: r = t; g = p; b = v; break;
-    default: r = v; g = p; b = q; break;
+    case 0:
+      r = v;
+      g = t;
+      b = p;
+      break;
+    case 1:
+      r = q;
+      g = v;
+      b = p;
+      break;
+    case 2:
+      r = p;
+      g = v;
+      b = t;
+      break;
+    case 3:
+      r = p;
+      g = q;
+      b = v;
+      break;
+    case 4:
+      r = t;
+      g = p;
+      b = v;
+      break;
+    default:
+      r = v;
+      g = p;
+      b = q;
+      break;
   }
   out[o] = r;
   out[o + 1] = g;
@@ -121,16 +145,7 @@ const SHADERS: Record<ShaderId, typeof sphericalWave> = {
 };
 
 /** Hot-path variant: writes RGB (0..1) into out[o..o+2] without allocating. */
-export function shadeInto(
-  out: Float32Array | number[],
-  o: number,
-  shader: ShaderId,
-  x: number,
-  y: number,
-  z: number,
-  t: number,
-  params: ResolvedParams,
-): void {
+export function shadeInto(out: Float32Array | number[], o: number, shader: ShaderId, x: number, y: number, z: number, t: number, params: ResolvedParams): void {
   SHADERS[shader](out, o, x, y, z, t, params);
 }
 
@@ -189,12 +204,7 @@ export type RouteOutputs = Record<string, number>;
 
 export type ModSums = Record<ModTarget, number>;
 
-export function resolveParams(
-  base: EffectParams,
-  routes: ModulationRoute[],
-  outputs: RouteOutputs,
-  manualStrobe: boolean,
-): { params: ResolvedParams; mods: ModSums } {
+export function resolveParams(base: EffectParams, routes: ModulationRoute[], outputs: RouteOutputs, manualStrobe: boolean): { params: ResolvedParams; mods: ModSums } {
   const mods: ModSums = {
     sphere_radius: 0,
     shader_speed: 0,

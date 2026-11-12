@@ -9,14 +9,19 @@ import { CameraScannerView } from './components/scanner/CameraScannerView';
 import { ModulationView } from './components/patcher/ModulationView';
 import { DeviceFleetView } from './components/devices/DeviceFleetView';
 import { LiveControlPad } from './components/livepad/LiveControlPad';
+import { useLang } from './i18n';
 
 function Shell() {
   const store = useVoxelStoreRef();
   const view = useVoxel((s) => s.view);
   const { setView, setBlackout, panic, undo, redo, tapTempo } = useVoxelActions();
   const cmd = useProjectCommands();
+  const lang = useLang();
 
   useEffect(() => startEngine(store), [store]);
+  useEffect(() => {
+    document.documentElement.lang = lang;
+  }, [lang]);
   useEffect(() => startAutosave(store), [store]);
 
   useEffect(() => {
@@ -52,7 +57,8 @@ function Shell() {
   }, [setView, setBlackout, panic, undo, redo, tapTempo, cmd, store]);
 
   return (
-    <div className="flex h-full flex-col bg-canvas">
+    // Keyed on the language: switching remounts the UI so every label re-renders translated.
+    <div key={lang} className="flex h-full flex-col bg-canvas">
       <TopHeader />
       {/* The studio stays mounted so the WebGL context and camera survive tab switches. */}
       <div className={view === 'studio' ? 'flex min-h-0 flex-1' : 'hidden'}>

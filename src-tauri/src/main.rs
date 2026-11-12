@@ -6,7 +6,7 @@ mod ddp;
 mod inputs;
 mod midi;
 
-use std::net::{IpAddr, SocketAddr, TcpStream};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -27,6 +27,30 @@ struct SendReport {
     micros: u64,
 }
 
+/// Output and probes only target the local network: private IPv4 ranges, CGNAT/Tailscale
+/// (100.64.0.0/10), link-local, loopback, broadcast, and IPv6 unique-local, link-local and
+/// loopback. A compromised page therefore cannot use the app to send traffic to the internet.
+fn is_local_network(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            let [a, b, ..] = v4.octets();
+            v4.is_private() || v4.is_loopback() || v4.is_link_local() || v4 == Ipv4Addr::BROADCAST || (a == 100 && (64..128).contains(&b))
+        }
+        IpAddr::V6(v6) => {
+            let first = v6.segments()[0];
+            v6.is_loopback() || (first & 0xfe00) == 0xfc00 || (first & 0xffc0) == 0xfe80
+        }
+    }
+}
+
+fn parse_lan_ip(ip: &str) -> Result<IpAddr, String> {
+    let addr: IpAddr = ip.trim().parse().map_err(|e| format!("invalid IP '{ip}': {e}"))?;
+    if !is_local_network(addr) {
+        return Err(format!("{addr} is not on a local network; output is limited to LAN addresses"));
+    }
+    Ok(addr)
+}
+
 fn header<'a>(request: &'a Request<'_>, name: &str) -> Result<&'a str, String> {
     request
         .headers()
@@ -43,8 +67,7 @@ async fn send_ddp_frame(state: State<'_, DdpState>, request: Request<'_>) -> Res
     let InvokeBody::Raw(rgb) = request.body() else {
         return Err("expected a raw RGB body".to_string());
     };
-    let ip = header(&request, "x-ddp-ip")?;
-    let addr: IpAddr = ip.trim().parse().map_err(|e| format!("invalid IP '{ip}': {e}"))?;
+    let addr = parse_lan_ip(header(&request, "x-ddp-ip")?)?;
     let port: u16 = header(&request, "x-ddp-port")?.parse().map_err(|e| format!("invalid port: {e}"))?;
     let sequence: u8 = header(&request, "x-ddp-seq")?.parse().map_err(|e| format!("invalid sequence: {e}"))?;
     let target = SocketAddr::new(addr, port);
@@ -56,9 +79,7 @@ async fn send_ddp_frame(state: State<'_, DdpState>, request: Request<'_>) -> Res
         return Err("UDP socket unavailable".to_string());
     };
     let started = Instant::now();
-    let stats = sender
-        .send_frame(target, rgb, sequence)
-        .map_err(|e| format!("send to {target} failed: {e}"))?;
+    let stats = sender.send_frame(target, rgb, sequence).map_err(|e| format!("send to {target} failed: {e}"))?;
     Ok(SendReport {
         packets: stats.packets,
         bytes: stats.bytes,
@@ -89,10 +110,7 @@ const PROJECT_FILTER: &str = "VOXEL // STUDIO project";
 
 /// Forces a `.json` extension so the dialog cannot be used to write other file types.
 fn with_json_extension(mut path: PathBuf) -> PathBuf {
-    let is_json = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("json"));
+    let is_json = path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("json"));
     if !is_json {
         path.set_extension("voxel.json");
     }
@@ -101,10 +119,7 @@ fn with_json_extension(mut path: PathBuf) -> PathBuf {
 
 fn file_ref(path: &Path) -> FileRef {
     FileRef {
-        name: path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default(),
+        name: path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
         path: path.display().to_string(),
     }
 }
@@ -144,12 +159,7 @@ async fn save_project(
 /// Native Open dialog restricted to JSON files. Returns None when the user cancels.
 #[tauri::command]
 async fn open_project(app: AppHandle, state: State<'_, ProjectFile>) -> Result<Option<OpenedFile>, String> {
-    let Some(picked) = app
-        .dialog()
-        .file()
-        .add_filter(PROJECT_FILTER, &["json"])
-        .blocking_pick_file()
-    else {
+    let Some(picked) = app.dialog().file().add_filter(PROJECT_FILTER, &["json"]).blocking_pick_file() else {
         return Ok(None);
     };
     let path = picked.into_path().map_err(|e| e.to_string())?;
@@ -199,14 +209,12 @@ fn forget_project_file(state: State<'_, ProjectFile>) -> Result<(), String> {
 /// microseconds, or None when the host did not accept the connection in time.
 #[tauri::command]
 async fn probe_device(ip: String, port: u16, timeout_ms: u64) -> Result<Option<u64>, String> {
-    let addr: IpAddr = ip.trim().parse().map_err(|e| format!("invalid IP '{ip}': {e}"))?;
+    let addr = parse_lan_ip(&ip)?;
     let target = SocketAddr::new(addr, port);
     let timeout = Duration::from_millis(timeout_ms.clamp(50, 5000));
     tauri::async_runtime::spawn_blocking(move || {
         let started = Instant::now();
-        TcpStream::connect_timeout(&target, timeout)
-            .ok()
-            .map(|_| started.elapsed().as_micros() as u64)
+        TcpStream::connect_timeout(&target, timeout).ok().map(|_| started.elapsed().as_micros() as u64)
     })
     .await
     .map_err(|e| format!("probe task failed: {e}"))
@@ -250,12 +258,36 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::with_json_extension;
+    use super::{is_local_network, with_json_extension};
     use std::path::PathBuf;
 
     #[test]
+    fn only_local_network_targets_are_allowed() {
+        for ok in [
+            "192.168.1.42",
+            "10.0.0.5",
+            "172.31.255.1",
+            "100.100.1.2",
+            "169.254.3.4",
+            "127.0.0.1",
+            "255.255.255.255",
+            "fd12::1",
+            "fe80::1",
+            "::1",
+        ] {
+            assert!(is_local_network(ok.parse().unwrap()), "{ok}");
+        }
+        for bad in ["8.8.8.8", "172.32.0.1", "100.128.0.1", "1.1.1.1", "2001:4860::8888", "224.0.0.1"] {
+            assert!(!is_local_network(bad.parse().unwrap()), "{bad}");
+        }
+    }
+
+    #[test]
     fn saved_projects_always_end_in_json() {
-        assert_eq!(with_json_extension(PathBuf::from("/tmp/show.voxel.json")), PathBuf::from("/tmp/show.voxel.json"));
+        assert_eq!(
+            with_json_extension(PathBuf::from("/tmp/show.voxel.json")),
+            PathBuf::from("/tmp/show.voxel.json")
+        );
         assert_eq!(with_json_extension(PathBuf::from("/tmp/SHOW.JSON")), PathBuf::from("/tmp/SHOW.JSON"));
         assert_eq!(with_json_extension(PathBuf::from("/tmp/show")), PathBuf::from("/tmp/show.voxel.json"));
         assert_eq!(with_json_extension(PathBuf::from("/tmp/run.sh")), PathBuf::from("/tmp/run.voxel.json"));

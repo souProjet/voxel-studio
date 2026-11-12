@@ -1,12 +1,36 @@
 import { useMemo, useState } from 'react';
-import { Activity, Braces, ChevronDown, ChevronRight, CircleDashed, Copy, Cpu, Eye, EyeOff, FileDown, FileUp, Grid3x3, Layers, Minus, Plus, Radar, Spline, Trash, Waypoints, Zap, type LucideIcon } from 'lucide-react';
+import {
+  Activity,
+  Braces,
+  ChevronDown,
+  ChevronRight,
+  CircleDashed,
+  Copy,
+  Cpu,
+  Eye,
+  EyeOff,
+  FileDown,
+  FileUp,
+  Grid3x3,
+  Layers,
+  Minus,
+  Plus,
+  Radar,
+  Spline,
+  Trash,
+  Waypoints,
+  Zap,
+  type LucideIcon,
+} from 'lucide-react';
 import type { SensorKind, StripShape } from '../../types/voxel';
 import { useVoxel, useVoxelActions, useVoxelStoreRef, totalLeds } from '../../state/useVoxelStore';
+import { useDeleteCommands } from '../../state/useDeleteCommands';
 import { exportMappingCsv, exportMappingJson, parsePointsCsv } from '../../services/mappingIO';
 import { exportTextFile, pickTextFile } from '../../services/tauriBridge';
 import { KIND_META, MAX_LEDS } from '../../services/catalog';
 import { denormalize, sensorChannels } from '../../services/sensors';
 import { IconButton, SectionHeader, SliderBar } from '../ui/primitives';
+import { t } from '../../i18n';
 import { KIND_ICON } from '../ui/sensorIcons';
 
 const SHAPE_ICON: Record<StripShape, LucideIcon> = {
@@ -25,16 +49,17 @@ function StripTree() {
   const devices = useVoxel((s) => s.devices);
   const selectedId = useVoxel((s) => s.selectedStripId);
   const store = useVoxelStoreRef();
-  const { selectStrip, updateStrip, removeStrip, addStrip, duplicateStrip, addPointsStrip, notify } = useVoxelActions();
+  const { selectStrip, updateStrip, addStrip, duplicateStrip, addPointsStrip, notify } = useVoxelActions();
+  const del = useDeleteCommands();
 
   const exportMapping = async (kind: 'csv' | 'json') => {
     const st = store.getState();
     const body = kind === 'csv' ? exportMappingCsv(st.strips, st.devices) : exportMappingJson(st.strips, st.devices);
     try {
       const name = await exportTextFile(body, `${st.projectName || 'mapping'}-mapping.${kind}`, kind);
-      if (name) notify(`Exported ${name}`);
+      if (name) notify(t('Exported {name}', { name }));
     } catch (e) {
-      notify(`Export failed: ${errorText(e)}`, 'error');
+      notify(t('Export failed: {error}', { error: errorText(e) }), 'error');
     }
   };
 
@@ -45,44 +70,44 @@ function StripTree() {
       const parsed = parsePointsCsv(file.contents);
       const st = store.getState();
       const device = st.devices.find((d) => d.id === st.strips.find((x) => x.id === st.selectedStripId)?.deviceId) ?? st.devices.find((d) => d.protocol === 'DDP');
-      if (!device) throw new Error('Add a DDP controller first.');
+      if (!device) throw new Error(t('Add a DDP controller first.'));
       const free = MAX_LEDS - totalLeds(st.strips);
       addPointsStrip(file.name.replace(/\.[^.]+$/, ''), parsed.points, device.id);
+      const skipped = parsed.skippedLines;
       const notes = [
-        parsed.convertedFromMm ? 'converted from mm' : '',
-        parsed.skippedLines ? `${parsed.skippedLines} lines skipped` : '',
-        parsed.points.length > free ? `truncated to ${free} (LED budget)` : '',
+        parsed.convertedFromMm ? t('converted from mm') : '',
+        skipped ? (skipped === 1 ? t('1 line skipped') : t('{n} lines skipped', { n: skipped })) : '',
+        parsed.points.length > free ? t('truncated to {n} (LED budget)', { n: free }) : '',
       ].filter(Boolean);
-      notify(`Imported ${Math.min(parsed.points.length, free)} points on ${device.name}${notes.length ? ` (${notes.join(', ')})` : ''}`);
+      const n = Math.min(parsed.points.length, free);
+      const summary = n === 1 ? t('Imported 1 point on {name}', { name: device.name }) : t('Imported {n} points on {name}', { n, name: device.name });
+      notify(notes.length ? `${summary} (${notes.join(', ')})` : summary);
     } catch (e) {
-      notify(`Import failed: ${errorText(e)}`, 'error');
+      notify(t('Import failed: {error}', { error: errorText(e) }), 'error');
     }
   };
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const used = totalLeds(strips);
 
   const groups = useMemo(
-    () =>
-      devices
-        .map((d) => ({ device: d, strips: strips.filter((s) => s.deviceId === d.id) }))
-        .filter((g) => g.strips.length > 0 || g.device.protocol === 'DDP'),
+    () => devices.map((d) => ({ device: d, strips: strips.filter((s) => s.deviceId === d.id) })).filter((g) => g.strips.length > 0 || g.device.protocol === 'DDP'),
     [devices, strips],
   );
 
   return (
     <>
       <SectionHeader
-        title="Scene"
+        title={t('Scene')}
         icon={Layers}
         right={
           <>
             <span className="tabular font-mono text-[10px] text-zinc-500">
               {used}/{MAX_LEDS}
             </span>
-            <IconButton icon={FileUp} title="Import LED positions from CSV (x, y, z per line)" onClick={importPoints} />
-            <IconButton icon={FileDown} title="Export mapping as CSV" onClick={() => exportMapping('csv')} />
-            <IconButton icon={Braces} title="Export mapping as JSON" onClick={() => exportMapping('json')} />
-            <IconButton icon={Plus} title="Add LED segment" onClick={addStrip} />
+            <IconButton icon={FileUp} title={t('Import LED positions from CSV (x, y, z per line)')} onClick={importPoints} />
+            <IconButton icon={FileDown} title={t('Export mapping as CSV')} onClick={() => exportMapping('csv')} />
+            <IconButton icon={Braces} title={t('Export mapping as JSON')} onClick={() => exportMapping('json')} />
+            <IconButton icon={Plus} title={t('Add LED segment')} onClick={addStrip} />
           </>
         }
       />
@@ -109,9 +134,7 @@ function StripTree() {
                     <div
                       key={s.id}
                       onClick={() => selectStrip(s.id)}
-                      className={`group relative flex h-7 cursor-pointer items-center gap-1.5 pl-7 pr-1.5 ${
-                        on ? 'bg-card text-zinc-100' : 'text-zinc-400 hover:bg-card/50'
-                      }`}
+                      className={`group relative flex h-7 cursor-pointer items-center gap-1.5 pl-7 pr-1.5 ${on ? 'bg-card text-zinc-100' : 'text-zinc-400 hover:bg-card/50'}`}
                     >
                       {on && <span className="absolute inset-y-1 left-0 w-0.5 rounded-r bg-spatial" />}
                       {(() => {
@@ -125,11 +148,11 @@ function StripTree() {
                       <div className="flex shrink-0 items-center opacity-60 group-hover:opacity-100">
                         <IconButton
                           icon={s.visible ? Eye : EyeOff}
-                          title={s.visible ? 'Hide (outputs black)' : 'Show'}
+                          title={s.visible ? t('Hide (outputs black)') : t('Show')}
                           onClick={() => updateStrip(s.id, { visible: !s.visible })}
                         />
-                        <IconButton icon={Copy} title="Duplicate" onClick={() => duplicateStrip(s.id)} />
-                        <IconButton icon={Trash} title="Delete segment" danger onClick={() => removeStrip(s.id)} />
+                        <IconButton icon={Copy} title={t('Duplicate')} onClick={() => duplicateStrip(s.id)} />
+                        <IconButton icon={Trash} title={t('Delete segment')} danger onClick={() => del.strip(s.id)} />
                       </div>
                     </div>
                   );
@@ -148,19 +171,20 @@ function SensorTree() {
   const sensors = useVoxel((s) => s.sensors);
   const devices = useVoxel((s) => s.devices);
   const selectedId = useVoxel((s) => s.selectedSensorId);
-  const { selectSensor, updateSensor, removeSensor, addSensor } = useVoxelActions();
+  const { selectSensor, updateSensor, addSensor } = useVoxelActions();
+  const del = useDeleteCommands();
 
   return (
     <div className="flex max-h-[34%] shrink-0 flex-col border-t border-line">
       <SectionHeader
-        title="Sensors"
+        title={t('Sensors')}
         icon={Radar}
         right={KINDS.map((k) => (
-          <IconButton key={k} icon={KIND_ICON[k]} title={`Add ${KIND_META[k].label} sensor`} onClick={() => addSensor(k)} />
+          <IconButton key={k} icon={KIND_ICON[k]} title={t('Add {kind} sensor', { kind: t(KIND_META[k].label) })} onClick={() => addSensor(k)} />
         ))}
       />
       <div className="min-h-0 overflow-y-auto py-1">
-        {sensors.length === 0 && <p className="px-3 py-2 text-[11px] text-zinc-600">No sensors. Add one with the buttons above.</p>}
+        {sensors.length === 0 && <p className="px-3 py-2 text-[11px] text-zinc-600">{t('No sensors. Add one with the buttons above.')}</p>}
         {sensors.map((x) => {
           const on = x.id === selectedId;
           const Icon = KIND_ICON[x.kind];
@@ -175,14 +199,10 @@ function SensorTree() {
               {on && <span className="absolute inset-y-1 left-0 w-0.5 rounded-r" style={{ background: color }} />}
               <Icon size={12} strokeWidth={1.75} style={{ color: x.enabled ? color : '#52525b' }} />
               <span className={`truncate text-[11px] ${x.enabled ? '' : 'text-zinc-600 line-through'}`}>{x.name}</span>
-              <span className="ml-auto max-w-[64px] shrink-0 truncate font-mono text-[9px] text-zinc-600">{host ? host.ip : 'unhosted'}</span>
+              <span className="ml-auto max-w-[64px] shrink-0 truncate font-mono text-[9px] text-zinc-600">{host ? host.ip : t('unhosted')}</span>
               <div className="flex shrink-0 items-center opacity-60 group-hover:opacity-100">
-                <IconButton
-                  icon={x.visible ? Eye : EyeOff}
-                  title={x.visible ? 'Hide gizmo' : 'Show gizmo'}
-                  onClick={() => updateSensor(x.id, { visible: !x.visible })}
-                />
-                <IconButton icon={Trash} title="Delete sensor and its routes" danger onClick={() => removeSensor(x.id)} />
+                <IconButton icon={x.visible ? Eye : EyeOff} title={x.visible ? t('Hide gizmo') : t('Show gizmo')} onClick={() => updateSensor(x.id, { visible: !x.visible })} />
+                <IconButton icon={Trash} title={t('Delete sensor and its routes')} danger onClick={() => void del.sensor(x.id)} />
               </div>
             </div>
           );
@@ -200,7 +220,7 @@ function SensorMonitor() {
 
   return (
     <div className="flex max-h-[40%] shrink-0 flex-col border-t border-line">
-      <SectionHeader title="Sensor Monitor" icon={Activity} right={strobe && <span className="font-mono text-[9px] text-net">STROBE</span>} />
+      <SectionHeader title={t('Sensor Monitor')} icon={Activity} right={strobe && <span className="font-mono text-[9px] text-net">{t('STROBE')}</span>} />
       <div className="flex min-h-0 flex-col gap-2.5 overflow-y-auto p-3">
         {sensors
           .filter((x) => x.enabled)
@@ -213,7 +233,7 @@ function SensorMonitor() {
                 <button type="button" onClick={() => selectSensor(x.id)} className="flex items-center justify-between text-left">
                   <span className="truncate text-[11px] text-zinc-400 hover:text-zinc-200">{x.name}</span>
                   <span className="shrink-0 font-mono text-[9px] uppercase text-zinc-600">
-                    {x.source === 'sim' ? (x.kind === 'gpio' ? 'momentary' : x.sim.mode) : x.source}
+                    {x.source === 'sim' ? (x.kind === 'gpio' ? t('momentary') : x.sim.mode === 'manual' ? t('Manual') : t('Auto')) : x.source}
                   </span>
                 </button>
                 {x.kind === 'gpio' ? (
@@ -231,7 +251,7 @@ function SensorMonitor() {
                     }`}
                   >
                     <Zap size={12} strokeWidth={2} />
-                    HOLD · {x.name.toUpperCase()}
+                    {t('HOLD')} · {x.name.toUpperCase()}
                   </button>
                 ) : (
                   channels.map((c) => {
@@ -239,7 +259,7 @@ function SensorMonitor() {
                     const raw = denormalize(c, v);
                     return (
                       <div key={c.key} className="flex items-center gap-1.5">
-                        <span className="w-10 shrink-0 truncate font-mono text-[10px] text-zinc-500">{c.label}</span>
+                        <span className="w-10 shrink-0 truncate font-mono text-[10px] text-zinc-500">{t(c.label)}</span>
                         <SliderBar
                           value={v}
                           color={color}

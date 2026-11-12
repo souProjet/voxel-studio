@@ -63,15 +63,7 @@ export interface ESP32Device {
   online: boolean;
 }
 
-export type ModTarget =
-  | 'sphere_radius'
-  | 'shader_speed'
-  | 'color_shift'
-  | 'strobe_override'
-  | 'master_brightness'
-  | 'origin_y'
-  | 'local_intensity'
-  | 'local_wave';
+export type ModTarget = 'sphere_radius' | 'shader_speed' | 'color_shift' | 'strobe_override' | 'master_brightness' | 'origin_y' | 'local_intensity' | 'local_wave';
 
 export type CurveType = 'linear' | 'exp' | 'scurve' | 'step';
 

@@ -1,13 +1,14 @@
 import type { ChannelKey, Generator, GeneratorKind, LfoShape, ModulationRoute, SensorChannel, SensorNode } from '../types/voxel';
+import { tk } from '../i18n';
 import { allChannels } from './sensors';
 import type { ChannelValues } from './shaderMath';
 
 export const GENERATOR_META: Record<GeneratorKind, { label: string; color: string; description: string }> = {
-  lfo: { label: 'LFO', color: '#38BDF8', description: 'Periodic wave, free-running in Hz or locked to the effect tempo.' },
-  envelope: { label: 'Envelope', color: '#FB7185', description: 'ADSR triggered when a channel rises above a threshold.' },
-  macro: { label: 'Macro', color: '#A3E635', description: 'Manual knob, also on the Live Pad. Patch it to several routes at once.' },
-  osc: { label: 'OSC In', color: '#FBBF24', description: 'Value received over OSC (UDP) at an address; use Learn to capture it.' },
-  midi: { label: 'MIDI In', color: '#C084FC', description: 'Knob, fader, pad or pitch bend from any connected MIDI port; use Learn to capture it.' },
+  lfo: { label: 'LFO', color: '#38BDF8', description: tk('Periodic wave, free-running in Hz or locked to the effect tempo.') },
+  envelope: { label: tk('Envelope'), color: '#FB7185', description: tk('ADSR triggered when a channel rises above a threshold.') },
+  macro: { label: 'Macro', color: '#A3E635', description: tk('Manual knob, also on the Live Pad. Patch it to several routes at once.') },
+  osc: { label: tk('OSC In'), color: '#FBBF24', description: tk('Value received over OSC (UDP) at an address; use Learn to capture it.') },
+  midi: { label: tk('MIDI In'), color: '#C084FC', description: tk('Knob, fader, pad or pitch bend from any connected MIDI port; use Learn to capture it.') },
 };
 
 export const LFO_SHAPES: LfoShape[] = ['sine', 'triangle', 'saw', 'square', 'random'];

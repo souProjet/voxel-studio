@@ -1,4 +1,5 @@
 import type { CurveType, EffectParams, LedChipset, ModTarget, PaletteId, SensorKind, ShaderPreset, SimScenario } from '../types/voxel';
+import { tk } from '../i18n';
 
 /** Total LEDs per project. Shading 20k LEDs with a crossfade costs about 4 ms per frame on CPU. */
 export const MAX_LEDS = 16384;
@@ -26,10 +27,10 @@ export const CHIPSETS: Record<LedChipset, ChipsetSpec> = {
 };
 
 export const SHADER_PRESETS: ShaderPreset[] = [
-  { id: 'spherical_wave', label: 'Spherical Wave', short: 'SPHERE', description: 'Radial wave from the effect origin, shell at radius' },
-  { id: 'perlin_plasma', label: 'Plasma Field', short: 'PLASMA', description: 'Trigonometric 3D interference field over X, Y, Z' },
-  { id: 'laser_plane', label: 'Laser Plane', short: 'LASER', description: 'Light plane sweeping the X axis' },
-  { id: 'height_spectrum', label: 'Height Spectrum', short: 'HEIGHT', description: 'Hue gradient indexed on LED height Y' },
+  { id: 'spherical_wave', label: tk('Spherical Wave'), short: 'SPHERE', description: tk('Radial wave from the effect origin, shell at radius') },
+  { id: 'perlin_plasma', label: tk('Plasma Field'), short: 'PLASMA', description: tk('Trigonometric 3D interference field over X, Y, Z') },
+  { id: 'laser_plane', label: tk('Laser Plane'), short: 'LASER', description: tk('Light plane sweeping the X axis') },
+  { id: 'height_spectrum', label: tk('Height Spectrum'), short: 'HEIGHT', description: tk('Hue gradient indexed on LED height Y') },
 ];
 
 /** Effect fields added after the first project format; also the defaults for older files. */
@@ -42,34 +43,77 @@ export const EFFECT_DEFAULTS: Pick<EffectParams, 'palette' | 'fadeSec' | 'bpm' |
 
 /** Cyclic gradients (last stop wraps to the first). Saturation and value still come from the shader. */
 export const PALETTES: Record<PaletteId, { label: string; stops: [number, string][] }> = {
-  spectrum: { label: 'Spectrum', stops: [] },
-  fire: { label: 'Fire', stops: [[0, '#ff1a00'], [0.3, '#ff7a00'], [0.55, '#ffd23f'], [0.8, '#ff4500'], [1, '#ff1a00']] },
-  ocean: { label: 'Ocean', stops: [[0, '#0033ff'], [0.3, '#00b4ff'], [0.55, '#00ffc8'], [0.8, '#0077ff'], [1, '#0033ff']] },
-  forest: { label: 'Forest', stops: [[0, '#00c03a'], [0.35, '#9dff00'], [0.65, '#00ff9c'], [1, '#00c03a']] },
-  sunset: { label: 'Sunset', stops: [[0, '#ff0058'], [0.3, '#ff6a00'], [0.55, '#ffb300'], [0.8, '#b000ff'], [1, '#ff0058']] },
-  ice: { label: 'Ice', stops: [[0, '#5ad1ff'], [0.4, '#ffffff'], [0.7, '#3d6bff'], [1, '#5ad1ff']] },
+  spectrum: { label: tk('Spectrum'), stops: [] },
+  fire: {
+    label: tk('Fire'),
+    stops: [
+      [0, '#ff1a00'],
+      [0.3, '#ff7a00'],
+      [0.55, '#ffd23f'],
+      [0.8, '#ff4500'],
+      [1, '#ff1a00'],
+    ],
+  },
+  ocean: {
+    label: tk('Ocean'),
+    stops: [
+      [0, '#0033ff'],
+      [0.3, '#00b4ff'],
+      [0.55, '#00ffc8'],
+      [0.8, '#0077ff'],
+      [1, '#0033ff'],
+    ],
+  },
+  forest: {
+    label: tk('Forest'),
+    stops: [
+      [0, '#00c03a'],
+      [0.35, '#9dff00'],
+      [0.65, '#00ff9c'],
+      [1, '#00c03a'],
+    ],
+  },
+  sunset: {
+    label: tk('Sunset'),
+    stops: [
+      [0, '#ff0058'],
+      [0.3, '#ff6a00'],
+      [0.55, '#ffb300'],
+      [0.8, '#b000ff'],
+      [1, '#ff0058'],
+    ],
+  },
+  ice: {
+    label: tk('Ice'),
+    stops: [
+      [0, '#5ad1ff'],
+      [0.4, '#ffffff'],
+      [0.7, '#3d6bff'],
+      [1, '#5ad1ff'],
+    ],
+  },
 };
 
 export const KIND_META: Record<SensorKind, { label: string; color: string; hardware: string }> = {
-  audio: { label: 'Audio', color: '#D946EF', hardware: 'I2S mic (INMP441)' },
-  gps: { label: 'GPS', color: '#F59E0B', hardware: 'UART GPS (NEO-M8N)' },
-  gpio: { label: 'GPIO', color: '#10B981', hardware: 'Digital input' },
-  gyro: { label: 'Gyro', color: '#06B6D4', hardware: 'IMU (MPU6050)' },
+  audio: { label: 'Audio', color: '#D946EF', hardware: tk('I2S mic (INMP441)') },
+  gps: { label: 'GPS', color: '#F59E0B', hardware: tk('UART GPS (NEO-M8N)') },
+  gpio: { label: 'GPIO', color: '#10B981', hardware: tk('Digital input') },
+  gyro: { label: tk('Gyro'), color: '#06B6D4', hardware: 'IMU (MPU6050)' },
 };
 
 export const SCENARIOS: Record<SensorKind, { value: SimScenario; label: string }[]> = {
   audio: [
-    { value: 'electro', label: 'Electro (4/4)' },
-    { value: 'ambient', label: 'Ambient pad' },
-    { value: 'speech', label: 'Speech' },
+    { value: 'electro', label: tk('Electro (4/4)') },
+    { value: 'ambient', label: tk('Ambient pad') },
+    { value: 'speech', label: tk('Speech') },
     { value: 'silence', label: 'Silence' },
   ],
   gps: [
-    { value: 'drive', label: 'Highway drive' },
-    { value: 'city', label: 'City stop & go' },
+    { value: 'drive', label: tk('Highway drive') },
+    { value: 'city', label: tk('City stop & go') },
   ],
   gpio: [],
-  gyro: [{ value: 'sway', label: 'Pendulum sway' }],
+  gyro: [{ value: 'sway', label: tk('Pendulum sway') }],
 };
 
 export interface TargetMeta {
@@ -83,14 +127,14 @@ export interface TargetMeta {
 }
 
 export const TARGET_META: Record<ModTarget, TargetMeta> = {
-  sphere_radius: { label: 'Sphere Radius', detail: '3D influence radius', range: 2, unit: 'm' },
-  shader_speed: { label: 'Time Frequency', detail: 'Shader speed', range: 4, unit: 'x' },
-  color_shift: { label: 'Chroma Shift', detail: 'Hue rotation', range: 0.5, unit: 'turn' },
-  strobe_override: { label: 'Strobe Override', detail: 'Flash above 50%', range: 1, unit: '' },
-  master_brightness: { label: 'Master Bright.', detail: 'Output gain', range: 1, unit: '%' },
-  origin_y: { label: 'Origin Y', detail: 'Effect height', range: 1.2, unit: 'm' },
-  local_intensity: { label: 'Local Intensity', detail: 'Per-LED gain near sensor', range: 2, unit: 'x', spatial: true },
-  local_wave: { label: 'Local Wave', detail: 'Ring from sensor on onset', range: 1, unit: '', spatial: true },
+  sphere_radius: { label: tk('Sphere Radius'), detail: tk('3D influence radius'), range: 2, unit: 'm' },
+  shader_speed: { label: tk('Time Frequency'), detail: tk('Shader speed'), range: 4, unit: 'x' },
+  color_shift: { label: tk('Chroma Shift'), detail: tk('Hue rotation'), range: 0.5, unit: 'turn' },
+  strobe_override: { label: tk('Strobe Override'), detail: tk('Flash above 50%'), range: 1, unit: '' },
+  master_brightness: { label: tk('Master Bright.'), detail: tk('Output gain'), range: 1, unit: '%' },
+  origin_y: { label: tk('Origin Y'), detail: tk('Effect height'), range: 1.2, unit: 'm' },
+  local_intensity: { label: tk('Local Intensity'), detail: tk('Per-LED gain near sensor'), range: 2, unit: 'x', spatial: true },
+  local_wave: { label: tk('Local Wave'), detail: tk('Ring from sensor on onset'), range: 1, unit: '', spatial: true },
 };
 
 export const CURVES: CurveType[] = ['linear', 'exp', 'scurve', 'step'];
