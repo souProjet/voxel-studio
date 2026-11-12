@@ -1,13 +1,25 @@
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
-import { Box, Globe } from 'lucide-react';
+import { Box, Focus, Globe } from 'lucide-react';
 import { useVoxel, useVoxelActions, useVoxelStoreRef } from '../../state/useVoxelStore';
-import type { SensorNode } from '../../types/voxel';
+import type { SensorNode, Vec3 } from '../../types/voxel';
 import { KIND_META, MAX_LEDS, ROOM, SHADER_PRESETS } from '../../services/catalog';
 import { runtime } from '../../services/engine';
 import { sensorChannels } from '../../services/sensors';
 
 const LED_FLOOR = 0.045;
+/** Ray-to-handle distance that grabs a handle, in meters. */
+const HANDLE_GRAB = 0.14;
+
+type ViewPreset = 'persp' | 'top' | 'front' | 'side';
+type ViewCommand = { kind: 'preset'; preset: ViewPreset } | { kind: 'focus' };
+
+interface Handle {
+  pos: THREE.Vector3;
+  apply: (p: Vec3) => void;
+}
+
+const round3 = (v: number) => Math.round(v * 1000) / 1000;
 
 function edges(w: number, h: number, d: number, x: number, y: number, z: number, color: number, opacity: number) {
   const geo = new THREE.EdgesGeometry(new THREE.BoxGeometry(w, h, d));
@@ -78,8 +90,9 @@ function buildRoom(): THREE.Group {
 export function ThreeVoxelCanvas() {
   const hostRef = useRef<HTMLDivElement>(null);
   const camRef = useRef<HTMLSpanElement>(null);
+  const commandRef = useRef<(c: ViewCommand) => void>(() => undefined);
   const store = useVoxelStoreRef();
-  const { selectStrip, selectSensor } = useVoxelActions();
+  const { selectStrip, selectSensor, setParams, updateSensor, updateStrip } = useVoxelActions();
 
   useEffect(() => {
     const host = hostRef.current!;
@@ -133,6 +146,15 @@ export function ThreeVoxelCanvas() {
     leds.count = 0;
     scene.add(leds);
 
+    const handleMat = new THREE.MeshBasicMaterial({ color: 0x06b6d4, depthTest: false, transparent: true, opacity: 0.9 });
+    const handleGeo = new THREE.SphereGeometry(0.045, 12, 8);
+    const endHandles = [new THREE.Mesh(handleGeo, handleMat), new THREE.Mesh(handleGeo, handleMat)];
+    for (const h of endHandles) {
+      h.renderOrder = 12;
+      h.visible = false;
+      scene.add(h);
+    }
+
     const selGeo = new THREE.BufferGeometry();
     const selLine = new THREE.Line(selGeo, new THREE.LineBasicMaterial({ color: 0x06b6d4, transparent: true, opacity: 0.55 }));
     scene.add(selLine);
@@ -161,7 +183,7 @@ export function ThreeVoxelCanvas() {
       const p = layout.positions;
       for (let i = 0; i < layout.total; i++) {
         const r = layout.ranges[layout.rangeOf[i]];
-        if (r.visible) leds.setMatrixAt(i, m.makeTranslation(p[i * 3], p[i * 3 + 1], p[i * 3 + 2]));
+        if (r.visible && !layout.dark[i]) leds.setMatrixAt(i, m.makeTranslation(p[i * 3], p[i * 3 + 1], p[i * 3 + 2]));
         else leds.setMatrixAt(i, zero);
       }
       leds.count = layout.total;
@@ -194,17 +216,38 @@ export function ThreeVoxelCanvas() {
     ro.observe(host);
     resize();
 
-    // Input: left drag orbit, right / shift drag pan, wheel zoom, click to pick a strip.
+    // Input: drag a handle to move it (Alt: vertical, Cmd/Ctrl: 10 cm grid), otherwise left
+    // drag orbits, right / Shift drag pans, wheel zooms, click picks a sensor or segment.
     const el = renderer.domElement;
-    let drag: { x: number; y: number; mode: 'orbit' | 'pan'; moved: number } | null = null;
+    let drag: { x: number; y: number; mode: 'orbit' | 'pan' | 'handle'; moved: number; handle?: Handle; plane?: THREE.Plane } | null = null;
     const ray = new THREE.Raycaster();
     const ndc = new THREE.Vector2();
     const tmp = new THREE.Vector3();
+    const hit = new THREE.Vector3();
 
-    const pick = (clientX: number, clientY: number) => {
+    const aim = (clientX: number, clientY: number) => {
       const rect = el.getBoundingClientRect();
       ndc.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
       ray.setFromCamera(ndc, camera);
+    };
+
+    /** Draggable points: effect origin, visible sensors, and the selected segment's anchors. */
+    const handles = (): Handle[] => {
+      const s = store.getState();
+      const list: Handle[] = [{ pos: new THREE.Vector3(...s.params.origin), apply: (origin) => setParams({ origin }) }];
+      for (const x of s.sensors) {
+        if (x.visible) list.push({ pos: new THREE.Vector3(...x.position), apply: (position) => updateSensor(x.id, { position }) });
+      }
+      const strip = s.strips.find((x) => x.id === s.selectedStripId);
+      if (strip && strip.shape !== 'points' && strip.shape !== 'polyline') {
+        list.push({ pos: new THREE.Vector3(...strip.start), apply: (start) => updateStrip(strip.id, { start }) });
+        if (strip.shape !== 'arc') list.push({ pos: new THREE.Vector3(...strip.end), apply: (end) => updateStrip(strip.id, { end }) });
+      }
+      return list;
+    };
+
+    const pick = (clientX: number, clientY: number) => {
+      aim(clientX, clientY);
       let hitSensor: string | null = null;
       let hitD = 0.15 * 0.15;
       for (const g of gizmos) {
@@ -223,7 +266,7 @@ export function ThreeVoxelCanvas() {
       let bestD = 0.12 * 0.12;
       for (let i = 0; i < layout.total; i++) {
         const r = layout.ranges[layout.rangeOf[i]];
-        if (!r.visible) continue;
+        if (!r.visible || layout.dark[i]) continue;
         tmp.fromArray(layout.positions, i * 3);
         const d = ray.ray.distanceSqToPoint(tmp);
         if (d < bestD) {
@@ -236,10 +279,39 @@ export function ThreeVoxelCanvas() {
 
     const onDown = (e: PointerEvent) => {
       el.setPointerCapture(e.pointerId);
+      if (e.button === 0 && !e.shiftKey) {
+        aim(e.clientX, e.clientY);
+        let best: Handle | undefined;
+        let bestD = HANDLE_GRAB * HANDLE_GRAB;
+        for (const h of handles()) {
+          const d = ray.ray.distanceSqToPoint(h.pos);
+          if (d < bestD) {
+            bestD = d;
+            best = h;
+          }
+        }
+        if (best) {
+          // Horizontal plane through the handle, or a vertical plane facing the camera with Alt.
+          const normal = e.altKey ? new THREE.Vector3(camera.position.x - best.pos.x, 0, camera.position.z - best.pos.z).normalize() : new THREE.Vector3(0, 1, 0);
+          const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, best.pos);
+          drag = { x: e.clientX, y: e.clientY, mode: 'handle', moved: 0, handle: best, plane };
+          return;
+        }
+      }
       drag = { x: e.clientX, y: e.clientY, mode: e.button === 2 || e.shiftKey ? 'pan' : 'orbit', moved: 0 };
     };
     const onMove = (e: PointerEvent) => {
       if (!drag) return;
+      if (drag.mode === 'handle' && drag.handle && drag.plane) {
+        aim(e.clientX, e.clientY);
+        if (!ray.ray.intersectPlane(drag.plane, hit)) return;
+        drag.moved += 5;
+        const snap = (v: number) => (e.metaKey || e.ctrlKey ? Math.round(v * 10) / 10 : round3(v));
+        const p = drag.handle.pos;
+        const next: Vec3 = e.altKey && drag.plane.normal.y === 0 ? [p.x, snap(hit.y), p.z] : [snap(hit.x), p.y, snap(hit.z)];
+        drag.handle.apply(next);
+        return;
+      }
       const dx = e.clientX - drag.x;
       const dy = e.clientY - drag.y;
       drag.x = e.clientX;
@@ -256,7 +328,7 @@ export function ThreeVoxelCanvas() {
       }
     };
     const onUp = (e: PointerEvent) => {
-      if (drag && drag.moved < 4 && e.button === 0) pick(e.clientX, e.clientY);
+      if (drag && drag.mode !== 'handle' && drag.moved < 4 && e.button === 0) pick(e.clientX, e.clientY);
       drag = null;
       if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
     };
@@ -272,6 +344,40 @@ export function ThreeVoxelCanvas() {
     el.addEventListener('wheel', onWheel, { passive: false });
     el.addEventListener('contextmenu', onContext);
 
+    const PRESETS: Record<ViewPreset, { theta: number; phi: number; radius: number }> = {
+      persp: { theta: 0.62, phi: 1.12, radius: 10.5 },
+      top: { theta: 0, phi: 0.08, radius: 11 },
+      front: { theta: 0, phi: Math.PI / 2 - 0.04, radius: 10 },
+      side: { theta: Math.PI / 2, phi: Math.PI / 2 - 0.04, radius: 10 },
+    };
+    commandRef.current = (c) => {
+      if (c.kind === 'preset') {
+        Object.assign(goal, PRESETS[c.preset]);
+        goal.target.set(0, 1.1, 0);
+        return;
+      }
+      // Focus: frame the selected segment, else the selected sensor, else the effect origin.
+      const s = store.getState();
+      const box = new THREE.Box3();
+      const r = runtime.layout.ranges.find((x) => x.stripId === s.selectedStripId);
+      const sensor = s.sensors.find((x) => x.id === s.selectedSensorId);
+      if (r) {
+        for (let i = r.start; i < r.start + r.count; i++) box.expandByPoint(tmp.fromArray(runtime.layout.positions, i * 3));
+      } else if (sensor) {
+        box.setFromCenterAndSize(new THREE.Vector3(...sensor.position), new THREE.Vector3(1, 1, 1).multiplyScalar(sensor.radius));
+      } else {
+        box.setFromCenterAndSize(new THREE.Vector3(...s.params.origin), new THREE.Vector3(2, 2, 2));
+      }
+      box.getCenter(goal.target);
+      goal.radius = Math.max(2, box.getSize(tmp).length() * 1.6);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement;
+      if (!host.clientWidth || t.tagName === 'INPUT' || t.tagName === 'SELECT' || e.metaKey || e.ctrlKey) return;
+      if (e.key.toLowerCase() === 'f') commandRef.current({ kind: 'focus' });
+    };
+    window.addEventListener('keydown', onKey);
+
     let raf = 0;
     let frame = 0;
     const loop = () => {
@@ -281,6 +387,14 @@ export function ThreeVoxelCanvas() {
       const s = store.getState();
       if (layoutVersion !== runtime.layoutVersion) syncLayout();
       if (selected !== s.selectedStripId) syncSelection(s.selectedStripId);
+      const sel = s.strips.find((x) => x.id === s.selectedStripId);
+      const anchored = sel && sel.shape !== 'points' && sel.shape !== 'polyline';
+      endHandles[0].visible = !!anchored;
+      endHandles[1].visible = !!anchored && sel.shape !== 'arc';
+      if (anchored) {
+        endHandles[0].position.set(...sel.start);
+        endHandles[1].position.set(...sel.end);
+      }
       if (sensorsSeen !== s.sensors) syncSensors(s.sensors);
       for (const g of gizmos) {
         let level = 0;
@@ -331,6 +445,7 @@ export function ThreeVoxelCanvas() {
     return () => {
       cancelAnimationFrame(raf);
       ro.disconnect();
+      window.removeEventListener('keydown', onKey);
       el.removeEventListener('pointerdown', onDown);
       el.removeEventListener('pointermove', onMove);
       el.removeEventListener('pointerup', onUp);
@@ -347,16 +462,17 @@ export function ThreeVoxelCanvas() {
       renderer.dispose();
       host.removeChild(el);
     };
-  }, [store, selectStrip, selectSensor]);
+  }, [store, selectStrip, selectSensor, setParams, updateSensor, updateStrip]);
 
   return (
     <div className="relative min-h-0 flex-1">
       <div ref={hostRef} className="absolute inset-0" />
       <ShaderPill />
       <ViewportToggles />
+      <ViewPresets onCommand={(c) => commandRef.current(c)} />
       <span ref={camRef} className="pointer-events-none absolute right-3 top-3 font-mono text-[10px] text-zinc-600" />
       <span className="pointer-events-none absolute bottom-2 right-3 text-[10px] text-zinc-600">
-        Drag orbit · Shift/Right drag pan · Wheel zoom · Click LED to select
+        Drag orbit · Shift/Right drag pan · Wheel zoom · Drag handles to move (Alt vertical, Cmd grid) · F focus
       </span>
     </div>
   );
@@ -408,6 +524,38 @@ function ViewportToggles() {
     <div className="absolute left-3 top-3 flex gap-1">
       {btn(showRoom, () => toggle('showRoom'), 'Room', Box)}
       {btn(showSphere, () => toggle('showSphere'), 'Sphere', Globe)}
+    </div>
+  );
+}
+
+function ViewPresets({ onCommand }: { onCommand: (c: ViewCommand) => void }) {
+  const views: { preset: ViewPreset; label: string }[] = [
+    { preset: 'persp', label: 'Persp' },
+    { preset: 'top', label: 'Top' },
+    { preset: 'front', label: 'Front' },
+    { preset: 'side', label: 'Side' },
+  ];
+  return (
+    <div className="absolute bottom-2 left-3 flex items-center gap-0.5 rounded-[5px] border border-line bg-panel/90 p-0.5">
+      {views.map((v) => (
+        <button
+          key={v.preset}
+          type="button"
+          onClick={() => onCommand({ kind: 'preset', preset: v.preset })}
+          className="h-5 rounded-[3px] px-2 text-[10px] text-zinc-400 hover:bg-card hover:text-zinc-100"
+        >
+          {v.label}
+        </button>
+      ))}
+      <span className="mx-0.5 h-3 w-px bg-line" />
+      <button
+        type="button"
+        onClick={() => onCommand({ kind: 'focus' })}
+        title="Frame the selection (F)"
+        className="flex h-5 items-center gap-1 rounded-[3px] px-2 text-[10px] text-zinc-400 hover:bg-card hover:text-zinc-100"
+      >
+        <Focus size={10} /> Focus
+      </button>
     </div>
   );
 }

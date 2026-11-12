@@ -135,6 +135,39 @@ export async function openProjectFile(): Promise<(SavedFile & { contents: string
   });
 }
 
+/**
+ * Writes an export (CSV or JSON). Under Tauri, Rust opens the Save dialog and forces the
+ * extension; in the browser the file is downloaded. Returns the file name, or null if canceled.
+ */
+export async function exportTextFile(contents: string, suggestedName: string, extension: 'csv' | 'json'): Promise<string | null> {
+  if (bridgeMode === 'native') {
+    return invoke<string | null>('export_file', { contents, suggestedName, extension });
+  }
+  const url = URL.createObjectURL(new Blob([contents], { type: extension === 'csv' ? 'text/csv' : 'application/json' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = suggestedName;
+  a.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return suggestedName;
+}
+
+/** Lets the user pick a text file to import (file input works in the browser and the Tauri webview). */
+export function pickTextFile(accept: string): Promise<{ name: string; contents: string } | null> {
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = accept;
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (!file) return resolve(null);
+      file.text().then((contents) => resolve({ name: file.name, contents }), () => resolve(null));
+    };
+    input.oncancel = () => resolve(null);
+    input.click();
+  });
+}
+
 /** New project: under Tauri, the next save asks for a file again. */
 export async function forgetProjectFile(): Promise<void> {
   if (bridgeMode === 'native') await invoke('forget_project_file');

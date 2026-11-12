@@ -1,7 +1,10 @@
 export type Vec3 = [number, number, number];
 
 export type LedChipset = 'WS2811' | 'WS2812B' | 'WS2815';
-export type StripShape = 'line' | 'helix';
+export type StripShape = 'line' | 'helix' | 'polyline' | 'arc' | 'matrix' | 'points';
+/** Byte order on the wire. WLED reorders itself, so keep RGB for WLED; other values serve custom firmware. */
+export type ColorOrder = 'RGB' | 'GRB' | 'BRG' | 'RBG' | 'GBR' | 'BGR';
+export type Axis = 'x' | 'y' | 'z';
 
 export interface LEDStrip {
   id: string;
@@ -9,16 +12,38 @@ export interface LEDStrip {
   deviceId: string;
   gpio: number;
   chipset: LedChipset;
+  /** Physical LEDs on the wire, skipped ones included. */
   ledCount: number;
   shape: StripShape;
+  /** line / helix: path ends. arc: center (start). matrix: opposite corners. */
   start: Vec3;
   end: Vec3;
-  /** Helix only: radius in meters around the start->end axis. */
+  /** helix: radius around the axis. arc: circle radius. */
   helixRadius: number;
-  /** Helix only: number of full turns between start and end. */
+  /** helix only: full turns between start and end. */
   helixTurns: number;
   visible: boolean;
+  /** Data enters at the `end` of the path instead of `start`. */
+  reversed: boolean;
+  /** LEDs present on the wire but unmapped (hidden or sacrificial), kept dark. */
+  skipStart: number;
+  skipEnd: number;
+  /** Per-segment output gain, 0..1. */
+  gain: number;
+  colorOrder: ColorOrder;
+  /** polyline: path vertices. points: one position per active LED (imported). */
+  points: Vec3[];
+  /** arc: axis normal to the circle, start angle and sweep in degrees. */
+  arcAxis: Axis;
+  arcStartDeg: number;
+  arcSweepDeg: number;
+  /** matrix: grid size and zig-zag wiring. */
+  matrixCols: number;
+  matrixRows: number;
+  serpentine: boolean;
 }
+
+export type TestPattern = 'off' | 'identify' | 'white' | 'red' | 'green' | 'blue' | 'chase';
 
 export type DeviceProtocol = 'DDP' | 'OSC';
 
@@ -136,14 +161,23 @@ export interface ShaderPreset {
   description: string;
 }
 
+export type PaletteId = 'spectrum' | 'fire' | 'ocean' | 'forest' | 'sunset' | 'ice';
+
 export interface EffectParams {
   origin: Vec3;
   radius: number;
   speed: number;
-  /** Hue rotation, 0..1 turns. */
+  /** Hue rotation, 0..1 turns (moves along the palette). */
   hueShift: number;
   /** 0..1 */
   masterBrightness: number;
+  /** Color gradient the shaders index; 'spectrum' is the full HSV wheel. */
+  palette: PaletteId;
+  /** Crossfade duration when switching shaders, seconds (0 = cut). */
+  fadeSec: number;
+  bpm: number;
+  /** When on, shader speed follows the tempo (120 BPM = 1x). */
+  bpmSync: boolean;
 }
 
 /** Params after modulation, consumed by shaderMath at render time. */

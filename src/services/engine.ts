@@ -1,8 +1,8 @@
-import type { DeviceRuntimeStats, EngineStats, Falloff, LEDStrip, ResolvedParams } from '../types/voxel';
+import type { DeviceRuntimeStats, EngineStats, Falloff, LEDStrip, ResolvedParams, ShaderId } from '../types/voxel';
 import type { VoxelStore } from '../state/useVoxelStore';
-import { CHIPSETS, DDP_SEND_HZ, LIMITER_RATIO, MAX_LEDS, TARGET_META } from './catalog';
-import { buildLayout, type LedLayout } from './geometry';
-import { falloffWeight, grayBit, resolveParams, routeOutput, shadeInto, strobeLevel, type ChannelValues, type ModSums } from './shaderMath';
+import { CHIPSETS, DDP_SEND_HZ, EFFECT_DEFAULTS, LIMITER_RATIO, MAX_LEDS, TARGET_META } from './catalog';
+import { buildLayout, COLOR_ORDER_INDEX, type LedLayout } from './geometry';
+import { clamp, falloffWeight, grayBit, resolveParams, routeOutput, shadeInto, strobeLevel, type ChannelValues, type ModSums } from './shaderMath';
 import { SensorPipeline, sensorIdOf } from './sensors';
 import { bridgeMode, encodeDdpPackets, probeDevice, sendDdpFrame } from './tauriBridge';
 
@@ -22,7 +22,7 @@ export const runtime = {
   layoutVersion: 0,
   /** Final linear RGB per LED (0..1) after brightness, strobe and current limiting. */
   colors: new Float32Array(MAX_LEDS * 3),
-  params: { origin: [0, 1.2, 0], radius: 1, speed: 1, hueShift: 0, masterBrightness: 1, strobe: false } as ResolvedParams,
+  params: { origin: [0, 1.2, 0], radius: 1, speed: 1, hueShift: 0, masterBrightness: 1, strobe: false, ...EFFECT_DEFAULTS } as ResolvedParams,
   mods: {} as ModSums,
   /** Normalized sensor channel values (0..1), refreshed at SENSOR_HZ. */
   sensorValues: {} as ChannelValues,
@@ -75,6 +75,10 @@ export function startEngine(store: VoxelStore): () => void {
   /** Last time requestAnimationFrame drove a frame; the worker clock takes over when it stalls. */
   let lastRafAt = 0;
   let lastStrips: LEDStrip[] | null = null;
+  let curShader: ShaderId | null = null;
+  let fromShader: ShaderId | null = null;
+  let fadeStart = 0;
+  const fadeRgb = new Float32Array(3);
   let lastSend = 0;
   let lastStats = performance.now();
   let renderFrames = 0;
@@ -107,6 +111,17 @@ export function startEngine(store: VoxelStore): () => void {
     runtime.mods = mods;
     runtime.time += dt;
     runtime.phase += dt * params.speed;
+
+    // Shader crossfade: the outgoing shader keeps rendering until the fade completes.
+    if (curShader === null) curShader = s.shader;
+    if (s.shader !== curShader) {
+      fromShader = curShader;
+      curShader = s.shader;
+      fadeStart = runtime.time;
+    }
+    const fadeK = fromShader && params.fadeSec > 0 ? clamp((runtime.time - fadeStart) / params.fadeSec) : 1;
+    if (fadeK >= 1) fromShader = null;
+    const fade = fromShader;
 
     const strobe = params.strobe ? strobeLevel(runtime.time) : -1;
     const gain = params.masterBrightness;
@@ -142,7 +157,7 @@ export function startEngine(store: VoxelStore): () => void {
       const end = r.start + r.count;
       for (let i = r.start; i < end; i++) {
         const k = i * 3;
-        if (!r.visible || s.blackout) {
+        if (!r.visible || s.blackout || layout.dark[i]) {
           colors[k] = colors[k + 1] = colors[k + 2] = 0;
         } else if (s.scan.active) {
           const v = grayBit(i, s.scan.bit) ? 1 : 0;
@@ -152,6 +167,12 @@ export function startEngine(store: VoxelStore): () => void {
         } else {
           const x = pos[k], y = pos[k + 1], z = pos[k + 2];
           shadeInto(colors, k, s.shader, x, y, z, runtime.phase, params);
+          if (fade) {
+            shadeInto(fadeRgb, 0, fade, x, y, z, runtime.phase, params);
+            colors[k] = fadeRgb[0] + (colors[k] - fadeRgb[0]) * fadeK;
+            colors[k + 1] = fadeRgb[1] + (colors[k + 1] - fadeRgb[1]) * fadeK;
+            colors[k + 2] = fadeRgb[2] + (colors[k + 2] - fadeRgb[2]) * fadeK;
+          }
           let mul = 1;
           let add = 0;
           for (const f of fields) {
@@ -173,6 +194,43 @@ export function startEngine(store: VoxelStore): () => void {
           colors[k + 1] = Math.min(1, (colors[k + 1] * mul + add) * gain);
           colors[k + 2] = Math.min(1, (colors[k + 2] * mul + add) * gain);
         }
+      }
+    }
+
+    // 1b. Per-segment gain, installation test patterns and segment identify. Blackout and
+    // skipped LEDs always stay dark; test patterns also light hidden segments.
+    const blink = Math.floor(now / 160) % 2 === 0;
+    const identifyId = s.identify && now < s.identify.until ? s.identify.stripId : null;
+    const chaseHead = Math.floor(runtime.time * 30);
+    for (const r of layout.ranges) {
+      const pattern = s.testPatterns[r.deviceId] ?? 'off';
+      const ident = identifyId === r.stripId;
+      if (r.gain === 1 && pattern === 'off' && !ident) continue;
+      for (let i = r.start, e = r.start + r.count; i < e; i++) {
+        if (s.blackout || layout.dark[i]) continue;
+        const k = i * 3;
+        let rr: number, gg: number, bb: number;
+        if (ident) {
+          rr = gg = bb = blink ? 1 : 0;
+        } else if (pattern === 'off') {
+          colors[k] *= r.gain;
+          colors[k + 1] *= r.gain;
+          colors[k + 2] *= r.gain;
+          continue;
+        } else if (pattern === 'identify') {
+          rr = 0;
+          gg = bb = blink ? 0.8 : 0;
+        } else if (pattern === 'chase') {
+          const behind = (((chaseHead - (i - r.start)) % r.count) + r.count) % r.count;
+          rr = gg = bb = behind === 0 ? 1 : behind < 6 ? 0.25 : 0.02;
+        } else {
+          rr = pattern === 'white' || pattern === 'red' ? 1 : 0;
+          gg = pattern === 'white' || pattern === 'green' ? 1 : 0;
+          bb = pattern === 'white' || pattern === 'blue' ? 1 : 0;
+        }
+        colors[k] = rr;
+        colors[k + 1] = gg;
+        colors[k + 2] = bb;
       }
     }
 
@@ -220,7 +278,12 @@ export function startEngine(store: VoxelStore): () => void {
         let o = 0;
         for (const r of layout.ranges) {
           if (r.deviceId !== d.id) continue;
-          for (let k = r.start * 3, e = (r.start + r.count) * 3; k < e; k++) rgb[o++] = Math.round(colors[k] * 255);
+          const [c0, c1, c2] = COLOR_ORDER_INDEX[r.colorOrder];
+          for (let k = r.start * 3, e = (r.start + r.count) * 3; k < e; k += 3) {
+            rgb[o++] = Math.round(colors[k + c0] * 255);
+            rgb[o++] = Math.round(colors[k + c1] * 255);
+            rgb[o++] = Math.round(colors[k + c2] * 255);
+          }
         }
         const sequence = ((sequences.get(d.id) ?? 0) % 15) + 1;
         sequences.set(d.id, sequence);

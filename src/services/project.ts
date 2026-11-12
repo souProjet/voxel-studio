@@ -1,5 +1,6 @@
 import type { EffectParams, ESP32Device, LEDStrip, ModulationRoute, SensorNode, ShaderId } from '../types/voxel';
-import { SHADER_PRESETS } from './catalog';
+import { EFFECT_DEFAULTS, SHADER_PRESETS } from './catalog';
+import { normalizeStrip } from './geometry';
 import type { VoxelStore } from '../state/useVoxelStore';
 
 export const PROJECT_FORMAT = 'voxel-studio';
@@ -75,7 +76,8 @@ export function parseProject(text: string): ProjectData {
   const p = f.params;
   if (!p || !isVec3(p.origin)) throw new Error('Project effect parameters are invalid.');
   if (!SHADER_PRESETS.some((x) => x.id === f.shader)) throw new Error(`Unknown shader "${String(f.shader)}".`);
-  return pickProject(f as ProjectFile);
+  // Files saved before newer strip fields existed get their defaults.
+  return pickProject({ ...(f as ProjectFile), params: { ...EFFECT_DEFAULTS, ...p }, strips: (f.strips as LEDStrip[]).map(normalizeStrip) });
 }
 
 export interface AutosaveEntry {

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Binary, Cpu, Pause, Play, Plug, Power, Radar, Satellite, Wifi } from 'lucide-react';
-import type { ESP32Device } from '../../types/voxel';
+import { Binary, Cpu, Pause, Play, Plug, Plus, Power, Radar, Satellite, Trash, Wifi } from 'lucide-react';
+import type { ESP32Device, TestPattern } from '../../types/voxel';
 import { useVoxel, useVoxelActions, uid } from '../../state/useVoxelStore';
 import { CHIPSETS, DDP_PORT, KIND_META, LIMITER_RATIO } from '../../services/catalog';
 import { denormalize, sensorChannels } from '../../services/sensors';
@@ -33,7 +33,18 @@ function Metric({ label, value, unit, color = 'text-zinc-200' }: { label: string
   );
 }
 
+const TEST_PATTERNS: { value: TestPattern; label: string }[] = [
+  { value: 'off', label: 'Off' },
+  { value: 'identify', label: 'ID' },
+  { value: 'white', label: 'W' },
+  { value: 'red', label: 'R' },
+  { value: 'green', label: 'G' },
+  { value: 'blue', label: 'B' },
+  { value: 'chase', label: 'Chase' },
+];
+
 function DeviceCard({ device }: { device: ESP32Device }) {
+  const pattern = useVoxel((s) => s.testPatterns[device.id] ?? 'off');
   const strips = useVoxel((s) => s.strips);
   const stats = useVoxel((s) => s.stats.devices[device.id]);
   const health = useVoxel((s) => s.health[device.id]);
@@ -43,7 +54,10 @@ function DeviceCard({ device }: { device: ESP32Device }) {
   const gpsSensor = hosted.find((x) => x.kind === 'gps');
   const gpsChannel = gpsSensor ? sensorChannels(gpsSensor)[0] : null;
   const gps = gpsChannel ? denormalize(gpsChannel, values[gpsChannel.key] ?? 0) : 0;
-  const { updateDevice } = useVoxelActions();
+  const { updateDevice, removeDevice, setTestPattern, notify } = useVoxelActions();
+  const remove = () => {
+    if (!removeDevice(device.id)) notify(`${device.name} still drives LED segments: move or delete them first.`, 'error');
+  };
   const set = (patch: Partial<ESP32Device>) => updateDevice(device.id, patch);
   const outputs = useMemo(() => strips.filter((s) => s.deviceId === device.id), [strips, device.id]);
   const isDdp = device.protocol === 'DDP';
@@ -69,7 +83,12 @@ function DeviceCard({ device }: { device: ESP32Device }) {
           }`}
         />
         <div className="min-w-0">
-          <div className="truncate text-[12px] font-medium text-zinc-100">{device.name}</div>
+          <input
+            value={device.name}
+            onChange={(e) => set({ name: e.target.value })}
+            spellCheck={false}
+            className="w-full truncate bg-transparent text-[12px] font-medium text-zinc-100 outline-none focus:text-white"
+          />
           <div className="font-mono text-[10px] text-zinc-500">
             {device.chip} · {device.firmware} ·{' '}
             {device.firmware !== 'WLED' ? (
@@ -95,6 +114,14 @@ function DeviceCard({ device }: { device: ESP32Device }) {
           className={`flex h-6 w-6 items-center justify-center rounded-[5px] border ${device.online ? 'border-net/40 text-net' : 'border-line text-zinc-600'}`}
         >
           <Power size={12} />
+        </button>
+        <button
+          type="button"
+          title="Remove device"
+          onClick={remove}
+          className="flex h-6 w-6 items-center justify-center rounded-[5px] border border-line text-zinc-500 hover:border-red-500/50 hover:text-red-400"
+        >
+          <Trash size={12} />
         </button>
       </div>
 
@@ -142,6 +169,17 @@ function DeviceCard({ device }: { device: ESP32Device }) {
 
         {isDdp && (
           <>
+            <div className="flex items-center gap-2">
+              <span className="w-12 font-mono text-[9px] text-zinc-500">TEST</span>
+              <Segmented<TestPattern>
+                mono
+                className="flex-1"
+                accent={pattern === 'off' ? '#10B981' : '#F59E0B'}
+                value={pattern}
+                onChange={(p) => setTestPattern(device.id, p)}
+                options={TEST_PATTERNS}
+              />
+            </div>
             <div className="flex flex-col gap-0.5">
               {outputs.length === 0 && <span className="text-[10px] text-zinc-600">No LED outputs mapped.</span>}
               {outputs.map((s) => (
@@ -434,8 +472,24 @@ function DdpInspector() {
   );
 }
 
+const newDevice = (n: number): ESP32Device => ({
+  id: uid('esp'),
+  name: `ESP32-${String(n).padStart(2, '0')}`,
+  chip: 'ESP32-WROOM-32E',
+  ip: '192.168.1.100',
+  mac: '00:00:00:00:00:00',
+  port: DDP_PORT,
+  protocol: 'DDP',
+  firmware: 'WLED',
+  psuVoltage: 5,
+  psuMaxAmps: 4,
+  currentLimiter: true,
+  online: false,
+});
+
 export function DeviceFleetView() {
   const devices = useVoxel((s) => s.devices);
+  const { addDevice } = useVoxelActions();
   const stats = useVoxel((s) => s.stats);
   const strips = useVoxel((s) => s.strips);
   const online = devices.filter((d) => d.online).length;
@@ -449,6 +503,14 @@ export function DeviceFleetView() {
           <span className="font-mono text-[11px] text-zinc-500">
             {online}/{devices.length} online · {strips.reduce((n, s) => n + s.ledCount, 0)} px · {stats.totalWatts.toFixed(1)} W · DDP {DDP_PORT}/udp
           </span>
+          <button
+            type="button"
+            title="Add a WLED controller (output starts disabled until you set its IP)"
+            onClick={() => addDevice(newDevice(devices.length + 1))}
+            className="ml-auto flex h-6 items-center gap-1 rounded-[5px] border border-net/40 px-2 text-[10px] text-net"
+          >
+            <Plus size={11} /> Add device
+          </button>
         </div>
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 2xl:grid-cols-3">
           {devices.map((d) => (

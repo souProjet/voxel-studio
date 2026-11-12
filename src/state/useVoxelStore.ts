@@ -12,12 +12,15 @@ import type {
   SensorKind,
   SensorNode,
   ShaderId,
+  StripShape,
+  TestPattern,
   Vec3,
   ViewId,
 } from '../types/voxel';
-import { KIND_META, MAX_LEDS, SCENARIOS } from '../services/catalog';
+import { EFFECT_DEFAULTS, KIND_META, MAX_LEDS, SCENARIOS } from '../services/catalog';
 import { allChannels, channelKey, sensorIdOf } from '../services/sensors';
-import { loadAutosave, PROJECT_KEYS, type ProjectData } from '../services/project';
+import { loadAutosave, pickProject, PROJECT_KEYS, type ProjectData } from '../services/project';
+import { normalizeStrip } from '../services/geometry';
 
 export interface VoxelState {
   view: ViewId;
@@ -47,9 +50,22 @@ export interface VoxelState {
   dirty: boolean;
   health: Record<string, DeviceHealth>;
   notice: Notice | null;
+  canUndo: boolean;
+  canRedo: boolean;
+  /** Installation test patterns per device (transient, never saved). */
+  testPatterns: Record<string, TestPattern>;
+  /** Blinks one segment so it can be found on site, until `until` (performance.now ms). */
+  identify: { stripId: string; until: number } | null;
 }
 
 type Update = Partial<VoxelState> | ((s: VoxelState) => Partial<VoxelState>);
+
+export interface SetOptions {
+  /** Live-control changes (held buttons, manual sensor values): no undo entry, no unsaved flag. */
+  transient?: boolean;
+  /** Replaces the project wholesale (open, new): clears undo history. */
+  resetHistory?: boolean;
+}
 
 /**
  * Minimal external store. React components subscribe through selectors (useSyncExternalStore),
@@ -58,9 +74,15 @@ type Update = Partial<VoxelState> | ((s: VoxelState) => Partial<VoxelState>);
  */
 export interface VoxelStore {
   getState(): VoxelState;
-  setState(update: Update): void;
+  setState(update: Update, options?: SetOptions): void;
   subscribe(listener: () => void): () => void;
+  undo(): void;
+  redo(): void;
 }
+
+const HISTORY_LIMIT = 100;
+/** Edits closer together than this (a scrub, a drag) collapse into one undo step. */
+const COALESCE_MS = 400;
 
 let idCounter = 0;
 export const uid = (prefix: string) => `${prefix}-${Date.now().toString(36)}${(idCounter++).toString(36)}`;
@@ -110,7 +132,7 @@ const INITIAL_DEVICES: ESP32Device[] = [
   },
 ];
 
-const INITIAL_STRIPS: LEDStrip[] = [
+const INITIAL_STRIPS: LEDStrip[] = ([
   {
     id: 'strip-nord',
     name: 'Corniche Plafond Nord',
@@ -167,7 +189,7 @@ const INITIAL_STRIPS: LEDStrip[] = [
     helixTurns: 6,
     visible: true,
   },
-];
+] as const satisfies Parameters<typeof normalizeStrip>[0][]).map((x) => normalizeStrip({ ...x, start: [...x.start], end: [...x.end] }));
 
 const sim = (patch: Partial<SensorNode['sim']> = {}): SensorNode['sim'] => ({
   mode: 'auto',
@@ -273,7 +295,7 @@ export function defaultProject(): ProjectData {
     routes: INITIAL_ROUTES,
     sensors: INITIAL_SENSORS,
     shader: 'spherical_wave',
-    params: { origin: [0, 1.2, 0], radius: 1.4, speed: 1, hueShift: 0, masterBrightness: 0.8 },
+    params: { origin: [0, 1.2, 0], radius: 1.4, speed: 1, hueShift: 0, masterBrightness: 0.8, ...EFFECT_DEFAULTS },
     showRoom: true,
     showSphere: true,
   };
@@ -299,24 +321,69 @@ function initialState(): VoxelState {
     dirty: saved?.dirty ?? false,
     health: {},
     notice: null,
+    canUndo: false,
+    canRedo: false,
+    testPatterns: {},
+    identify: null,
   };
 }
+
+/** Tap-tempo timestamps (ms), shared by the button and the T shortcut. */
+const taps: number[] = [];
 
 export function createVoxelStore(): VoxelStore {
   let state = initialState();
   const listeners = new Set<() => void>();
+  let past: ProjectData[] = [];
+  let future: ProjectData[] = [];
+  let lastEditAt = 0;
+  const emit = () => listeners.forEach((l) => l());
+
+  const restore = (snapshot: ProjectData) => {
+    state = { ...state, ...snapshot, dirty: true, canUndo: past.length > 0, canRedo: future.length > 0 };
+    lastEditAt = 0;
+    emit();
+  };
+
   return {
     getState: () => state,
-    setState(update) {
+    setState(update, options = {}) {
       const patch = typeof update === 'function' ? update(state) : update;
       const prev = state;
       state = { ...state, ...patch };
-      if (!('dirty' in patch) && PROJECT_KEYS.some((k) => state[k] !== prev[k])) state.dirty = true;
-      listeners.forEach((l) => l());
+      if (options.resetHistory) {
+        past = [];
+        future = [];
+        state.canUndo = state.canRedo = false;
+      } else if (!options.transient && PROJECT_KEYS.some((k) => state[k] !== prev[k])) {
+        if (!('dirty' in patch)) state.dirty = true;
+        const now = performance.now();
+        if (now - lastEditAt > COALESCE_MS) {
+          past.push(pickProject(prev));
+          if (past.length > HISTORY_LIMIT) past.shift();
+        }
+        lastEditAt = now;
+        future = [];
+        state.canUndo = past.length > 0;
+        state.canRedo = false;
+      }
+      emit();
     },
     subscribe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
+    },
+    undo() {
+      const snapshot = past.pop();
+      if (!snapshot) return;
+      future.push(pickProject(state));
+      restore(snapshot);
+    },
+    redo() {
+      const snapshot = future.pop();
+      if (!snapshot) return;
+      past.push(pickProject(state));
+      restore(snapshot);
     },
   };
 }
@@ -329,6 +396,16 @@ function createActions(store: VoxelStore) {
     setView: (view: ViewId) => set({ view }),
     setShader: (shader: ShaderId) => set({ shader }),
     setParams: (patch: Partial<EffectParams>) => set((s) => ({ params: { ...s.params, ...patch } })),
+    /** Tap tempo: averages the last taps; a pause over 2 s starts a new measure. */
+    tapTempo: () => {
+      const now = performance.now();
+      if (taps.length && now - taps[taps.length - 1] > 2000) taps.length = 0;
+      taps.push(now);
+      if (taps.length > 5) taps.shift();
+      if (taps.length < 2) return;
+      const bpm = (60000 * (taps.length - 1)) / (taps[taps.length - 1] - taps[0]);
+      set((s) => ({ params: { ...s.params, bpm: Math.round(Math.min(300, Math.max(30, bpm)) * 10) / 10 } }));
+    },
     setOriginAxis: (axis: 0 | 1 | 2, value: number) =>
       set((s) => {
         const origin = [...s.params.origin] as Vec3;
@@ -339,15 +416,25 @@ function createActions(store: VoxelStore) {
     setBlackout: (blackout: boolean) => set({ blackout }),
     /** Kills every momentary or risky state at once: blackout on, strobe and scan off, buttons released. */
     panic: () =>
-      set((s) => ({
-        blackout: true,
-        manualStrobe: false,
-        scan: { ...s.scan, active: false },
-        sensors: s.sensors.map((x) => (x.kind === 'gpio' ? { ...x, sim: { ...x.sim, manual: { ...x.sim.manual, pressed: 0 } } } : x)),
-      })),
+      set(
+        (s) => ({
+          blackout: true,
+          manualStrobe: false,
+          scan: { ...s.scan, active: false },
+          testPatterns: {},
+          identify: null,
+          sensors: s.sensors.map((x) => (x.kind === 'gpio' ? { ...x, sim: { ...x.sim, manual: { ...x.sim.manual, pressed: 0 } } } : x)),
+        }),
+        { transient: true },
+      ),
+    undo: () => store.undo(),
+    redo: () => store.redo(),
+    setTestPattern: (deviceId: string, pattern: TestPattern) => set((s) => ({ testPatterns: { ...s.testPatterns, [deviceId]: pattern } })),
+    identifyStrip: (stripId: string) => set({ identify: { stripId, until: performance.now() + 4000 } }),
 
     newProject: () =>
-      set({
+      set(
+        {
         ...defaultProject(),
         projectName: 'Untitled',
         projectPath: null,
@@ -356,9 +443,12 @@ function createActions(store: VoxelStore) {
         selectedSensorId: null,
         selectedRouteId: null,
         sensorValues: {},
-      }),
+        },
+        { resetHistory: true },
+      ),
     loadProject: (data: ProjectData, name: string, path: string | null) =>
-      set({
+      set(
+        {
         ...data,
         projectName: name,
         projectPath: path,
@@ -367,7 +457,9 @@ function createActions(store: VoxelStore) {
         selectedSensorId: null,
         selectedRouteId: null,
         sensorValues: {},
-      }),
+        },
+        { resetHistory: true },
+      ),
     markSaved: (name: string, path: string | null) => set({ projectName: name, projectPath: path, dirty: false }),
     setHealth: (id: string, health: DeviceHealth) => set((s) => ({ health: { ...s.health, [id]: health } })),
     notify: (text: string, tone: Notice['tone'] = 'info') => set({ notice: { id: Date.now(), text, tone } }),
@@ -383,6 +475,8 @@ function createActions(store: VoxelStore) {
           const next = { ...strip, ...patch };
           const others = totalLeds(s.strips) - strip.ledCount;
           next.ledCount = Math.max(1, Math.min(Math.round(next.ledCount), MAX_LEDS - others));
+          next.skipStart = Math.max(0, Math.min(Math.round(next.skipStart), next.ledCount - 1));
+          next.skipEnd = Math.max(0, Math.min(Math.round(next.skipEnd), next.ledCount - 1 - next.skipStart));
           return next;
         }),
       })),
@@ -393,7 +487,7 @@ function createActions(store: VoxelStore) {
         const device = s.devices.find((d) => d.protocol === 'DDP') ?? s.devices[0];
         const used = new Set(s.strips.filter((x) => x.deviceId === device.id).map((x) => x.gpio));
         const gpio = [2, 4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23].find((g) => !used.has(g)) ?? 0;
-        const strip: LEDStrip = {
+        const strip = normalizeStrip({
           id: uid('strip'),
           name: `Segment ${s.strips.length + 1}`,
           deviceId: device.id,
@@ -403,10 +497,85 @@ function createActions(store: VoxelStore) {
           shape: 'line',
           start: [-1, 1, 0],
           end: [1, 1, 0],
-          helixRadius: 0.4,
-          helixTurns: 4,
-          visible: true,
+        });
+        return { strips: [...s.strips, strip], selectedStripId: strip.id, selectedSensorId: null };
+      }),
+    duplicateStrip: (id: string) =>
+      set((s) => {
+        const i = s.strips.findIndex((x) => x.id === id);
+        const free = MAX_LEDS - totalLeds(s.strips);
+        if (i < 0 || free <= 0) return {};
+        const src = s.strips[i];
+        const shift = (v: Vec3): Vec3 => [v[0], v[1], +(v[2] + 0.15).toFixed(3)];
+        const copy: LEDStrip = {
+          ...src,
+          id: uid('strip'),
+          name: `${src.name} copy`,
+          ledCount: Math.min(src.ledCount, free),
+          start: shift(src.start),
+          end: shift(src.end),
+          points: src.points.map(shift),
         };
+        return { strips: [...s.strips.slice(0, i + 1), copy, ...s.strips.slice(i + 1)], selectedStripId: copy.id, selectedSensorId: null };
+      }),
+    /** Moves a segment one slot earlier or later in its controller's pixel buffer. */
+    moveStrip: (id: string, dir: -1 | 1) =>
+      set((s) => {
+        const i = s.strips.findIndex((x) => x.id === id);
+        if (i < 0) return {};
+        let j = i + dir;
+        while (j >= 0 && j < s.strips.length && s.strips[j].deviceId !== s.strips[i].deviceId) j += dir;
+        if (j < 0 || j >= s.strips.length) return {};
+        const strips = [...s.strips];
+        [strips[i], strips[j]] = [strips[j], strips[i]];
+        return { strips };
+      }),
+    /** Changes shape and seeds the fields the new shape needs from the current geometry. */
+    setStripShape: (id: string, shape: StripShape) =>
+      set((s) => ({
+        strips: s.strips.map((x) => {
+          if (x.id !== id) return x;
+          const next: LEDStrip = { ...x, shape };
+          if (shape === 'polyline' && x.points.length < 2) next.points = [x.start, x.end];
+          if (shape === 'matrix') next.ledCount = next.matrixCols * next.matrixRows + x.skipStart + x.skipEnd;
+          if (shape === 'points' && x.points.length === 0) next.points = [x.start, x.end];
+          return next;
+        }),
+      })),
+    /** Matrix size drives the LED count. */
+    setMatrix: (id: string, patch: Partial<Pick<LEDStrip, 'matrixCols' | 'matrixRows' | 'serpentine'>>) =>
+      set((s) => {
+        const others = s.strips.reduce((n, x) => (x.id === id ? n : n + x.ledCount), 0);
+        return {
+          strips: s.strips.map((x) => {
+            if (x.id !== id) return x;
+            const next = { ...x, ...patch };
+            next.matrixCols = Math.max(1, Math.round(next.matrixCols));
+            next.matrixRows = Math.max(1, Math.round(next.matrixRows));
+            const wanted = next.matrixCols * next.matrixRows + x.skipStart + x.skipEnd;
+            if (others + wanted > MAX_LEDS) return x;
+            next.ledCount = wanted;
+            return next;
+          }),
+        };
+      }),
+    addPointsStrip: (name: string, points: Vec3[], deviceId: string) =>
+      set((s) => {
+        const free = MAX_LEDS - totalLeds(s.strips);
+        const pts = points.slice(0, Math.max(0, free));
+        if (pts.length === 0) return {};
+        const strip = normalizeStrip({
+          id: uid('strip'),
+          name,
+          deviceId,
+          gpio: 0,
+          chipset: 'WS2812B',
+          ledCount: pts.length,
+          shape: 'points',
+          start: pts[0],
+          end: pts[pts.length - 1],
+          points: pts,
+        });
         return { strips: [...s.strips, strip], selectedStripId: strip.id, selectedSensorId: null };
       }),
     removeStrip: (id: string) =>
@@ -418,6 +587,16 @@ function createActions(store: VoxelStore) {
     updateDevice: (id: string, patch: Partial<ESP32Device>) =>
       set((s) => ({ devices: s.devices.map((d) => (d.id === id ? { ...d, ...patch } : d)) })),
     addDevice: (device: ESP32Device) => set((s) => ({ devices: [...s.devices, device] })),
+    /** Refuses while segments still output through the device; hosted sensors become unhosted. */
+    removeDevice: (id: string): boolean => {
+      const st = store.getState();
+      if (st.strips.some((x) => x.deviceId === id)) return false;
+      set((s) => ({
+        devices: s.devices.filter((d) => d.id !== id),
+        sensors: s.sensors.map((x) => (x.deviceId === id ? { ...x, deviceId: null } : x)),
+      }));
+      return true;
+    },
 
     selectSensor: (selectedSensorId: string | null) => set({ selectedSensorId, selectedStripId: null }),
     addSensor: (kind: SensorKind) =>
@@ -450,9 +629,12 @@ function createActions(store: VoxelStore) {
         selectedSensorId: s.selectedSensorId === id ? null : s.selectedSensorId,
       })),
     setSensorManual: (id: string, channelId: string, raw: number) =>
-      set((s) => ({
-        sensors: s.sensors.map((x) => (x.id === id ? { ...x, sim: { ...x.sim, manual: { ...x.sim.manual, [channelId]: raw } } } : x)),
-      })),
+      set(
+        (s) => ({
+          sensors: s.sensors.map((x) => (x.id === id ? { ...x, sim: { ...x.sim, manual: { ...x.sim.manual, [channelId]: raw } } } : x)),
+        }),
+        { transient: true },
+      ),
     addBand: (sensorId: string) =>
       set((s) => ({
         sensors: s.sensors.map((x) =>

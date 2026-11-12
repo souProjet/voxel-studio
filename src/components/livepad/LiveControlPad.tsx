@@ -11,7 +11,7 @@ type Form = 'tablet' | 'phone';
 interface LivePreset {
   name: string;
   shader: ShaderId;
-  params: Omit<EffectParams, 'origin' | 'masterBrightness'>;
+  params: Pick<EffectParams, 'radius' | 'speed' | 'hueShift'>;
   color: string;
 }
 

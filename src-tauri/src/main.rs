@@ -150,6 +150,32 @@ async fn open_project(app: AppHandle, state: State<'_, ProjectFile>) -> Result<O
     Ok(Some(OpenedFile { name, path: shown, contents }))
 }
 
+/// Saves an export (mapping CSV or JSON) through a native dialog. Only `csv` and `json`
+/// are accepted and the extension is enforced. Returns the file name, or None if canceled.
+#[tauri::command]
+async fn export_file(app: AppHandle, contents: String, suggested_name: String, extension: String) -> Result<Option<String>, String> {
+    let ext = match extension.as_str() {
+        "csv" => "csv",
+        "json" => "json",
+        other => return Err(format!("unsupported export type '{other}'")),
+    };
+    let Some(picked) = app
+        .dialog()
+        .file()
+        .add_filter(ext.to_uppercase(), &[ext])
+        .set_file_name(suggested_name)
+        .blocking_save_file()
+    else {
+        return Ok(None);
+    };
+    let mut path = picked.into_path().map_err(|e| e.to_string())?;
+    if path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref() != Some(ext) {
+        path.set_extension(ext);
+    }
+    std::fs::write(&path, contents).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    Ok(Some(file_ref(&path).name))
+}
+
 /// New project: the next save must ask for a file again.
 #[tauri::command]
 fn forget_project_file(state: State<'_, ProjectFile>) -> Result<(), String> {
@@ -184,6 +210,7 @@ fn main() {
             save_project,
             open_project,
             forget_project_file,
+            export_file,
             probe_device
         ])
         .run(tauri::generate_context!())

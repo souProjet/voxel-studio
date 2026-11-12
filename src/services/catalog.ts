@@ -1,4 +1,4 @@
-import type { CurveType, LedChipset, ModTarget, SensorKind, ShaderPreset, SimScenario } from '../types/voxel';
+import type { CurveType, EffectParams, LedChipset, ModTarget, PaletteId, SensorKind, ShaderPreset, SimScenario } from '../types/voxel';
 
 export const MAX_LEDS = 2000;
 export const DDP_PORT = 4048;
@@ -30,6 +30,24 @@ export const SHADER_PRESETS: ShaderPreset[] = [
   { id: 'laser_plane', label: 'Laser Plane', short: 'LASER', description: 'Light plane sweeping the X axis' },
   { id: 'height_spectrum', label: 'Height Spectrum', short: 'HEIGHT', description: 'Hue gradient indexed on LED height Y' },
 ];
+
+/** Effect fields added after the first project format; also the defaults for older files. */
+export const EFFECT_DEFAULTS: Pick<EffectParams, 'palette' | 'fadeSec' | 'bpm' | 'bpmSync'> = {
+  palette: 'spectrum',
+  fadeSec: 1,
+  bpm: 120,
+  bpmSync: false,
+};
+
+/** Cyclic gradients (last stop wraps to the first). Saturation and value still come from the shader. */
+export const PALETTES: Record<PaletteId, { label: string; stops: [number, string][] }> = {
+  spectrum: { label: 'Spectrum', stops: [] },
+  fire: { label: 'Fire', stops: [[0, '#ff1a00'], [0.3, '#ff7a00'], [0.55, '#ffd23f'], [0.8, '#ff4500'], [1, '#ff1a00']] },
+  ocean: { label: 'Ocean', stops: [[0, '#0033ff'], [0.3, '#00b4ff'], [0.55, '#00ffc8'], [0.8, '#0077ff'], [1, '#0033ff']] },
+  forest: { label: 'Forest', stops: [[0, '#00c03a'], [0.35, '#9dff00'], [0.65, '#00ff9c'], [1, '#00c03a']] },
+  sunset: { label: 'Sunset', stops: [[0, '#ff0058'], [0.3, '#ff6a00'], [0.55, '#ffb300'], [0.8, '#b000ff'], [1, '#ff0058']] },
+  ice: { label: 'Ice', stops: [[0, '#5ad1ff'], [0.4, '#ffffff'], [0.7, '#3d6bff'], [1, '#5ad1ff']] },
+};
 
 export const KIND_META: Record<SensorKind, { label: string; color: string; hardware: string }> = {
   audio: { label: 'Audio', color: '#D946EF', hardware: 'I2S mic (INMP441)' },

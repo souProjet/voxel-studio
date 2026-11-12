@@ -1,5 +1,5 @@
-import type { CurveType, EffectParams, Falloff, ModTarget, ModulationRoute, ResolvedParams, ShaderId } from '../types/voxel';
-import { ROOM, TARGET_META } from './catalog';
+import type { CurveType, EffectParams, Falloff, ModTarget, ModulationRoute, PaletteId, ResolvedParams, ShaderId } from '../types/voxel';
+import { PALETTES, ROOM, TARGET_META } from './catalog';
 
 const TAU = Math.PI * 2;
 
@@ -29,6 +29,39 @@ export function hsvInto(out: Float32Array | number[], o: number, h: number, s: n
 }
 
 /* ------------------------------------------------------------------ */
+/* Palettes                                                            */
+/* ------------------------------------------------------------------ */
+
+const LUT_SIZE = 256;
+
+/** 256-entry RGB lookup per gradient palette, built once. */
+const PALETTE_LUT = Object.fromEntries(
+  Object.entries(PALETTES).map(([id, { stops }]) => {
+    const lut = new Float32Array(LUT_SIZE * 3);
+    const rgb = stops.map(([, hex]) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255));
+    for (let i = 0; i < LUT_SIZE && stops.length > 1; i++) {
+      const t = i / LUT_SIZE;
+      let k = 0;
+      while (k < stops.length - 2 && stops[k + 1][0] <= t) k++;
+      const f = (t - stops[k][0]) / (stops[k + 1][0] - stops[k][0] || 1);
+      for (let c = 0; c < 3; c++) lut[i * 3 + c] = rgb[k][c] + (rgb[k + 1][c] - rgb[k][c]) * f;
+    }
+    return [id, lut];
+  }),
+) as Record<PaletteId, Float32Array>;
+
+/** Palette color at position h (wraps), desaturated toward white by s, scaled by v. */
+export function colorInto(out: Float32Array | number[], o: number, h: number, s: number, v: number, palette: PaletteId): void {
+  if (palette === 'spectrum') return hsvInto(out, o, h, s, v);
+  const lut = PALETTE_LUT[palette];
+  const i = Math.floor(fract(h) * LUT_SIZE) * 3;
+  const w = 1 - s;
+  out[o] = (lut[i] * s + w) * v;
+  out[o + 1] = (lut[i + 1] * s + w) * v;
+  out[o + 2] = (lut[i + 2] * s + w) * v;
+}
+
+/* ------------------------------------------------------------------ */
 /* Volumetric shaders: f(x, y, z, t, params) -> RGB in 0..1            */
 /* `t` is the speed-integrated phase, so speed changes never jump.     */
 /* ------------------------------------------------------------------ */
@@ -43,7 +76,7 @@ function sphericalWave(out: Float32Array | number[], o: number, x: number, y: nu
   const shell = Math.exp(-((d - r) * (d - r)) / (2 * shellW * shellW));
   const ripple = Math.pow(0.5 + 0.5 * Math.cos(d * 5 - t * 4), 4) * Math.exp((-d / r) * 0.6);
   const v = clamp(shell + ripple * 0.55);
-  hsvInto(out, o, 0.52 + p.hueShift + d * 0.08, clamp(0.9 - shell * 0.55), v);
+  colorInto(out, o, 0.52 + p.hueShift + d * 0.08, clamp(0.9 - shell * 0.55), v, p.palette);
 }
 
 function perlinPlasma(out: Float32Array | number[], o: number, x: number, y: number, z: number, t: number, p: ResolvedParams) {
@@ -59,7 +92,7 @@ function perlinPlasma(out: Float32Array | number[], o: number, x: number, y: num
     Math.sin(d * (6 / Math.max(p.radius, 0.2)) - t * 1.3);
   const n = a / 5;
   const v = 0.2 + 0.8 * Math.pow(0.5 + 0.5 * Math.sin(n * TAU), 1.5);
-  hsvInto(out, o, p.hueShift + n * 0.35 + t * 0.02, 0.85, v);
+  colorInto(out, o, p.hueShift + n * 0.35 + t * 0.02, 0.85, v, p.palette);
 }
 
 function laserPlane(out: Float32Array | number[], o: number, x: number, _y: number, _z: number, t: number, p: ResolvedParams) {
@@ -71,13 +104,13 @@ function laserPlane(out: Float32Array | number[], o: number, x: number, _y: numb
   const core = Math.exp(-(d * d) / (2 * w * w));
   const trail = d * dir < 0 ? Math.exp(-Math.abs(d) / 0.6) * 0.3 : 0;
   const v = clamp(core + trail);
-  hsvInto(out, o, 0.52 + p.hueShift, clamp(0.95 - core * 0.8), v);
+  colorInto(out, o, 0.52 + p.hueShift, clamp(0.95 - core * 0.8), v, p.palette);
 }
 
 function heightSpectrum(out: Float32Array | number[], o: number, _x: number, y: number, _z: number, t: number, p: ResolvedParams) {
   const yn = clamp(y / ROOM.height);
   const band = 0.5 + 0.5 * Math.sin(y * 7 - t * 2.5);
-  hsvInto(out, o, p.hueShift + yn * 0.75 + t * 0.03, 0.9, 0.35 + 0.65 * band * band);
+  colorInto(out, o, p.hueShift + yn * 0.75 + t * 0.03, 0.9, 0.35 + 0.65 * band * band, p.palette);
 }
 
 const SHADERS: Record<ShaderId, typeof sphericalWave> = {
@@ -164,9 +197,10 @@ export function resolveParams(
   for (const r of routes) mods[r.target] += routeOutput(r, values);
 
   const params: ResolvedParams = {
+    ...base,
     origin: [base.origin[0], base.origin[1] + mods.origin_y * TARGET_META.origin_y.range, base.origin[2]],
     radius: clamp(base.radius + mods.sphere_radius * TARGET_META.sphere_radius.range, 0.05, 8),
-    speed: Math.max(0, base.speed + mods.shader_speed * TARGET_META.shader_speed.range),
+    speed: Math.max(0, base.speed + mods.shader_speed * TARGET_META.shader_speed.range) * (base.bpmSync ? base.bpm / 120 : 1),
     hueShift: fract(base.hueShift + mods.color_shift * TARGET_META.color_shift.range),
     masterBrightness: clamp(base.masterBrightness + mods.master_brightness * TARGET_META.master_brightness.range),
     strobe: manualStrobe || mods.strobe_override > 0.5,

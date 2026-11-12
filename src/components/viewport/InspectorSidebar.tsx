@@ -1,8 +1,8 @@
-import { Crosshair, Minus, Plus, SlidersHorizontal, Spline, Trash } from 'lucide-react';
-import type { Falloff, LEDStrip, LedChipset, SensorNode, SensorSourceId, Vec3 } from '../../types/voxel';
+import { ArrowDown, ArrowUp, Copy, Crosshair, Flashlight, Minus, Plus, SlidersHorizontal, Trash } from 'lucide-react';
+import type { Axis, ColorOrder, Falloff, PaletteId, LEDStrip, LedChipset, SensorNode, SensorSourceId, StripShape, Vec3 } from '../../types/voxel';
 import { useVoxel, useVoxelActions } from '../../state/useVoxelStore';
-import { CHIPSETS, KIND_META, SCENARIOS, SHADER_PRESETS, TARGET_META } from '../../services/catalog';
-import { stripLength } from '../../services/geometry';
+import { CHIPSETS, KIND_META, PALETTES, SCENARIOS, SHADER_PRESETS, TARGET_META } from '../../services/catalog';
+import { activeCount, polylineVertices, stripLength } from '../../services/geometry';
 import { denormalize, manualDefault, SENSOR_SOURCES, sensorChannels, sensorIdOf } from '../../services/sensors';
 import { ScrubInput } from '../ui/ScrubInput';
 import { Field, IconButton, SectionHeader, Segmented, Select, TextInput, Toggle } from '../ui/primitives';
@@ -23,11 +23,16 @@ function Vec3Input({ value, onChange, min = -10, max = 10 }: { value: Vec3; onCh
   );
 }
 
+const paletteCss = (id: PaletteId) =>
+  id === 'spectrum'
+    ? 'linear-gradient(90deg,#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00)'
+    : `linear-gradient(90deg,${PALETTES[id].stops.map(([t, c]) => `${c} ${t * 100}%`).join(',')})`;
+
 function EffectSection() {
   const params = useVoxel((s) => s.params);
   const shader = useVoxel((s) => s.shader);
   const stats = useVoxel((s) => s.stats);
-  const { setParams, setOriginAxis } = useVoxelActions();
+  const { setParams, setOriginAxis, tapTempo } = useVoxelActions();
   const preset = SHADER_PRESETS.find((p) => p.id === shader)!;
 
   return (
@@ -53,6 +58,35 @@ function EffectSection() {
         <Field label="Master">
           <ScrubInput value={params.masterBrightness} onChange={(masterBrightness) => setParams({ masterBrightness })} min={0} max={1} step={0.01} displayScale={100} unit="%" accent="#06B6D4" modulated={stats.effectiveBrightness} className="flex-1" />
         </Field>
+        <Field label="Palette">
+          <div className="flex flex-1 items-center gap-1.5">
+            <span className="h-4 w-10 shrink-0 rounded-[3px] border border-line" style={{ background: paletteCss(params.palette) }} />
+            <div className="flex-1">
+              <Select<PaletteId>
+                value={params.palette}
+                onChange={(palette) => setParams({ palette })}
+                options={(Object.keys(PALETTES) as PaletteId[]).map((id) => ({ value: id, label: PALETTES[id].label }))}
+              />
+            </div>
+          </div>
+        </Field>
+        <Field label="Crossfade">
+          <ScrubInput value={params.fadeSec} onChange={(fadeSec) => setParams({ fadeSec })} min={0} max={8} step={0.05} unit="s" accent="#06B6D4" className="flex-1" />
+        </Field>
+        <Field label="Tempo">
+          <div className="flex flex-1 items-center gap-1.5">
+            <ScrubInput value={params.bpm} onChange={(bpm) => setParams({ bpm })} min={30} max={300} step={0.1} precision={1} unit="bpm" accent="#D946EF" className="flex-1" />
+            <button
+              type="button"
+              title="Tap tempo (T)"
+              onClick={tapTempo}
+              className="h-6 rounded-[5px] border border-audio/40 px-2 font-mono text-[10px] text-audio active:bg-audio/20"
+            >
+              TAP
+            </button>
+            <Toggle checked={params.bpmSync} onChange={(bpmSync) => setParams({ bpmSync })} color="#D946EF" title="Sync speed to tempo (120 BPM = 1x)" />
+          </div>
+        </Field>
         <div className="mt-1 grid grid-cols-3 gap-1 rounded-[5px] border border-line bg-inset px-2 py-1.5 font-mono text-[10px]">
           <span className="text-zinc-500">
             r <span className="text-audio">{stats.effectiveRadius.toFixed(2)}</span>
@@ -69,26 +103,44 @@ function EffectSection() {
   );
 }
 
+const SHAPES: { value: StripShape; label: string }[] = [
+  { value: 'line', label: 'Line' },
+  { value: 'helix', label: 'Helix' },
+  { value: 'polyline', label: 'Polyline (corners)' },
+  { value: 'arc', label: 'Arc / Ring' },
+  { value: 'matrix', label: 'Matrix panel' },
+  { value: 'points', label: 'Imported points' },
+];
+
+const COLOR_ORDERS: ColorOrder[] = ['RGB', 'GRB', 'BRG', 'RBG', 'GBR', 'BGR'];
+
 function SegmentSection({ strip }: { strip: LEDStrip }) {
   const devices = useVoxel((s) => s.devices);
   const strips = useVoxel((s) => s.strips);
-  const { updateStrip, removeStrip } = useVoxelActions();
+  const { updateStrip, removeStrip, duplicateStrip, moveStrip, setStripShape, setMatrix, identifyStrip } = useVoxelActions();
   const set = (patch: Partial<LEDStrip>) => updateStrip(strip.id, patch);
   const spec = CHIPSETS[strip.chipset];
   const length = stripLength(strip);
+  const active = activeCount(strip);
   const fullAmps = (strip.ledCount * spec.maFullWhite) / 1000;
-  let ddpOffset = 0;
-  for (const s of strips) {
-    if (s.id === strip.id) break;
-    if (s.deviceId === strip.deviceId) ddpOffset += s.ledCount;
-  }
+  const siblings = strips.filter((s) => s.deviceId === strip.deviceId);
+  const order = siblings.findIndex((s) => s.id === strip.id);
+  const ddpOffset = siblings.slice(0, order).reduce((n, s) => n + s.ledCount, 0);
+  const vertices = polylineVertices(strip);
+  const setVertex = (i: number, v: Vec3) => set({ points: vertices.map((p, k) => (k === i ? v : p)) });
 
   return (
     <>
       <SectionHeader
         title="Segment"
         icon={SlidersHorizontal}
-        right={<IconButton icon={Trash} title="Delete segment" danger onClick={() => removeStrip(strip.id)} />}
+        right={
+          <>
+            <IconButton icon={Flashlight} title="Identify: blink this segment for 4 s" onClick={() => identifyStrip(strip.id)} />
+            <IconButton icon={Copy} title="Duplicate segment" onClick={() => duplicateStrip(strip.id)} />
+            <IconButton icon={Trash} title="Delete segment" danger onClick={() => removeStrip(strip.id)} />
+          </>
+        }
       />
       <div className="flex flex-col gap-1.5 p-3">
         <Field label="Name">
@@ -101,9 +153,26 @@ function SegmentSection({ strip }: { strip: LEDStrip }) {
             options={devices.filter((d) => d.protocol === 'DDP').map((d) => ({ value: d.id, label: d.name }))}
           />
         </Field>
+        <Field label="Output">
+          <span className="flex-1 font-mono text-[10px] text-zinc-400">
+            #{order + 1} of {siblings.length} · px <span className="text-net">{ddpOffset}</span>
+          </span>
+          <IconButton icon={ArrowUp} title="Earlier in the controller's pixel buffer" onClick={() => moveStrip(strip.id, -1)} />
+          <IconButton icon={ArrowDown} title="Later in the controller's pixel buffer" onClick={() => moveStrip(strip.id, 1)} />
+        </Field>
         <Field label="GPIO">
           <ScrubInput value={strip.gpio} onChange={(gpio) => set({ gpio })} min={0} max={48} step={1} label="IO" accent="#10B981" className="flex-1" />
-          <ScrubInput value={strip.ledCount} onChange={(ledCount) => set({ ledCount })} min={1} max={2000} step={1} label="N" accent="#06B6D4" className="flex-1" />
+          <ScrubInput
+            value={strip.ledCount}
+            onChange={(ledCount) => set({ ledCount })}
+            min={1}
+            max={2000}
+            step={1}
+            label="N"
+            accent="#06B6D4"
+            className="flex-1"
+            title={strip.shape === 'matrix' ? 'Set by the matrix size' : 'LEDs on the wire'}
+          />
         </Field>
         <Field label="Chipset">
           <Segmented<LedChipset>
@@ -119,44 +188,138 @@ function SegmentSection({ strip }: { strip: LEDStrip }) {
           />
           <span className={`w-8 shrink-0 text-right font-mono text-[10px] ${spec.voltage === 12 ? 'text-gps' : 'text-net'}`}>{spec.voltage}V</span>
         </Field>
+
+        <Subheader>Geometry</Subheader>
         <Field label="Shape">
-          <Segmented
-            className="flex-1"
-            value={strip.shape}
-            onChange={(shape) => set({ shape })}
-            options={[
-              { value: 'line', label: 'Line', icon: Minus },
-              { value: 'helix', label: 'Helix', icon: Spline },
-            ]}
-          />
+          <Select<StripShape> value={strip.shape} onChange={(shape) => setStripShape(strip.id, shape)} options={SHAPES} />
         </Field>
-        <Field label="Start">
-          <Vec3Input value={strip.start} onChange={(start) => set({ start })} />
-        </Field>
-        <Field label="End">
-          <Vec3Input value={strip.end} onChange={(end) => set({ end })} />
-        </Field>
+        {(strip.shape === 'line' || strip.shape === 'helix') && (
+          <>
+            <Field label="Start">
+              <Vec3Input value={strip.start} onChange={(start) => set({ start })} />
+            </Field>
+            <Field label="End">
+              <Vec3Input value={strip.end} onChange={(end) => set({ end })} />
+            </Field>
+          </>
+        )}
         {strip.shape === 'helix' && (
           <Field label="Helix">
             <ScrubInput value={strip.helixRadius} onChange={(helixRadius) => set({ helixRadius })} min={0.02} max={3} step={0.01} label="R" unit="m" accent="#06B6D4" className="flex-1" />
             <ScrubInput value={strip.helixTurns} onChange={(helixTurns) => set({ helixTurns })} min={0.25} max={40} step={0.05} label="T" accent="#06B6D4" className="flex-1" />
           </Field>
         )}
+        {strip.shape === 'polyline' && (
+          <>
+            {vertices.map((v, i) => (
+              <Field
+                key={i}
+                label={`P${i + 1}`}
+                hint={
+                  vertices.length > 2 ? (
+                    <IconButton icon={Minus} title="Remove corner" onClick={() => set({ points: vertices.filter((_, k) => k !== i) })} />
+                  ) : undefined
+                }
+              >
+                <Vec3Input value={v} onChange={(p) => setVertex(i, p)} />
+              </Field>
+            ))}
+            <button
+              type="button"
+              onClick={() => {
+                const last = vertices[vertices.length - 1];
+                set({ points: [...vertices, [last[0] + 0.5, last[1], last[2]]] });
+              }}
+              className="flex h-6 items-center justify-center gap-1 rounded-[5px] border border-dashed border-line text-[10px] text-zinc-400 hover:border-line-hi"
+            >
+              <Plus size={11} /> Add corner
+            </button>
+          </>
+        )}
+        {strip.shape === 'arc' && (
+          <>
+            <Field label="Center">
+              <Vec3Input value={strip.start} onChange={(start) => set({ start })} />
+            </Field>
+            <Field label="Radius">
+              <ScrubInput value={strip.helixRadius} onChange={(helixRadius) => set({ helixRadius })} min={0.02} max={5} step={0.01} unit="m" accent="#06B6D4" className="flex-1" />
+            </Field>
+            <Field label="Normal">
+              <Segmented<Axis>
+                mono
+                className="flex-1"
+                value={strip.arcAxis}
+                onChange={(arcAxis) => set({ arcAxis })}
+                options={[
+                  { value: 'x', label: 'X' },
+                  { value: 'y', label: 'Y' },
+                  { value: 'z', label: 'Z' },
+                ]}
+              />
+            </Field>
+            <Field label="Angles">
+              <ScrubInput value={strip.arcStartDeg} onChange={(arcStartDeg) => set({ arcStartDeg })} min={-360} max={360} step={1} label="FROM" unit="°" accent="#06B6D4" className="flex-1" />
+              <ScrubInput value={strip.arcSweepDeg} onChange={(arcSweepDeg) => set({ arcSweepDeg })} min={-360} max={360} step={1} label="SWP" unit="°" accent="#06B6D4" className="flex-1" />
+            </Field>
+          </>
+        )}
+        {strip.shape === 'matrix' && (
+          <>
+            <Field label="Corner A">
+              <Vec3Input value={strip.start} onChange={(start) => set({ start })} />
+            </Field>
+            <Field label="Corner B">
+              <Vec3Input value={strip.end} onChange={(end) => set({ end })} />
+            </Field>
+            <Field label="Grid">
+              <ScrubInput value={strip.matrixCols} onChange={(matrixCols) => setMatrix(strip.id, { matrixCols })} min={1} max={128} step={1} label="COL" accent="#06B6D4" className="flex-1" />
+              <ScrubInput value={strip.matrixRows} onChange={(matrixRows) => setMatrix(strip.id, { matrixRows })} min={1} max={128} step={1} label="ROW" accent="#06B6D4" className="flex-1" />
+            </Field>
+            <Field label="Zig-zag">
+              <Toggle checked={strip.serpentine} onChange={(serpentine) => setMatrix(strip.id, { serpentine })} title="Serpentine wiring: every other row runs backward" />
+              <span className="text-[10px] text-zinc-600">Same Y on both corners = flat panel</span>
+            </Field>
+          </>
+        )}
+        {strip.shape === 'points' && (
+          <p className="text-[10px] leading-snug text-zinc-500">
+            {strip.points.length} imported positions. Import a new CSV from the Scene header to replace them.
+          </p>
+        )}
+
+        <Subheader>Wiring</Subheader>
+        <Field label="Direction">
+          <Toggle checked={strip.reversed} onChange={(reversed) => set({ reversed })} title="Data enters at the far end of the path" />
+          <span className="text-[10px] text-zinc-500">{strip.reversed ? 'Reversed: data enters at the end' : 'Data enters at the start'}</span>
+        </Field>
+        <Field label="Skip LEDs">
+          <ScrubInput value={strip.skipStart} onChange={(skipStart) => set({ skipStart })} min={0} max={strip.ledCount - 1} step={1} label="IN" accent="#71717a" className="flex-1" title="Dark LEDs at the data input" />
+          <ScrubInput value={strip.skipEnd} onChange={(skipEnd) => set({ skipEnd })} min={0} max={strip.ledCount - 1} step={1} label="OUT" accent="#71717a" className="flex-1" title="Dark LEDs at the far end" />
+        </Field>
+        <Field label="Gain">
+          <ScrubInput value={strip.gain} onChange={(gain) => set({ gain })} min={0} max={1} step={0.01} displayScale={100} unit="%" accent="#06B6D4" className="flex-1" />
+        </Field>
+        <Field label="Byte order">
+          <Select<ColorOrder> mono value={strip.colorOrder} onChange={(colorOrder) => set({ colorOrder })} options={COLOR_ORDERS.map((o) => ({ value: o, label: o }))} />
+        </Field>
+        <p className="text-[10px] leading-snug text-zinc-600">Keep RGB for WLED: it applies its own color order. Change it only for custom firmware.</p>
+
         <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 rounded-[5px] border border-line bg-inset px-2 py-1.5 font-mono text-[10px] text-zinc-500">
           <span>
             len <span className="text-zinc-300">{length.toFixed(2)} m</span>
           </span>
           <span>
-            dens <span className="text-zinc-300">{(strip.ledCount / Math.max(length, 0.01)).toFixed(0)} /m</span>
+            dens <span className="text-zinc-300">{(active / Math.max(length, 0.01)).toFixed(0)} /m</span>
+          </span>
+          <span>
+            active <span className="text-zinc-300">{active}</span>/{strip.ledCount}
           </span>
           <span>
             I max <span className="text-gps">{fullAmps.toFixed(2)} A</span>
           </span>
-          <span>
-            P max <span className="text-gps">{(fullAmps * spec.voltage).toFixed(1)} W</span>
-          </span>
           <span className="col-span-2">
-            DDP px <span className="text-net">{ddpOffset}</span> · byte <span className="text-net">0x{(ddpOffset * 3).toString(16).toUpperCase().padStart(4, '0')}</span>
+            DDP byte <span className="text-net">0x{(ddpOffset * 3).toString(16).toUpperCase().padStart(4, '0')}</span> · P max{' '}
+            <span className="text-gps">{(fullAmps * spec.voltage).toFixed(1)} W</span>
           </span>
         </div>
       </div>

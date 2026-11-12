@@ -1,17 +1,63 @@
 import { useMemo, useState } from 'react';
-import { Activity, ChevronDown, ChevronRight, Cpu, Eye, EyeOff, Layers, Minus, Plus, Radar, Spline, Trash, Zap } from 'lucide-react';
-import type { SensorKind } from '../../types/voxel';
-import { useVoxel, useVoxelActions, totalLeds } from '../../state/useVoxelStore';
+import { Activity, Braces, ChevronDown, ChevronRight, CircleDashed, Copy, Cpu, Eye, EyeOff, FileDown, FileUp, Grid3x3, Layers, Minus, Plus, Radar, Spline, Trash, Waypoints, Zap, type LucideIcon } from 'lucide-react';
+import type { SensorKind, StripShape } from '../../types/voxel';
+import { useVoxel, useVoxelActions, useVoxelStoreRef, totalLeds } from '../../state/useVoxelStore';
+import { exportMappingCsv, exportMappingJson, parsePointsCsv } from '../../services/mappingIO';
+import { exportTextFile, pickTextFile } from '../../services/tauriBridge';
 import { KIND_META, MAX_LEDS } from '../../services/catalog';
 import { denormalize, sensorChannels } from '../../services/sensors';
 import { IconButton, SectionHeader, SliderBar } from '../ui/primitives';
 import { KIND_ICON } from '../ui/sensorIcons';
 
+const SHAPE_ICON: Record<StripShape, LucideIcon> = {
+  line: Minus,
+  helix: Spline,
+  polyline: Waypoints,
+  arc: CircleDashed,
+  matrix: Grid3x3,
+  points: Activity,
+};
+
+const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
 function StripTree() {
   const strips = useVoxel((s) => s.strips);
   const devices = useVoxel((s) => s.devices);
   const selectedId = useVoxel((s) => s.selectedStripId);
-  const { selectStrip, updateStrip, removeStrip, addStrip } = useVoxelActions();
+  const store = useVoxelStoreRef();
+  const { selectStrip, updateStrip, removeStrip, addStrip, duplicateStrip, addPointsStrip, notify } = useVoxelActions();
+
+  const exportMapping = async (kind: 'csv' | 'json') => {
+    const st = store.getState();
+    const body = kind === 'csv' ? exportMappingCsv(st.strips, st.devices) : exportMappingJson(st.strips, st.devices);
+    try {
+      const name = await exportTextFile(body, `${st.projectName || 'mapping'}-mapping.${kind}`, kind);
+      if (name) notify(`Exported ${name}`);
+    } catch (e) {
+      notify(`Export failed: ${errorText(e)}`, 'error');
+    }
+  };
+
+  const importPoints = async () => {
+    const file = await pickTextFile('.csv,.tsv,.txt,text/csv');
+    if (!file) return;
+    try {
+      const parsed = parsePointsCsv(file.contents);
+      const st = store.getState();
+      const device = st.devices.find((d) => d.id === st.strips.find((x) => x.id === st.selectedStripId)?.deviceId) ?? st.devices.find((d) => d.protocol === 'DDP');
+      if (!device) throw new Error('Add a DDP controller first.');
+      const free = MAX_LEDS - totalLeds(st.strips);
+      addPointsStrip(file.name.replace(/\.[^.]+$/, ''), parsed.points, device.id);
+      const notes = [
+        parsed.convertedFromMm ? 'converted from mm' : '',
+        parsed.skippedLines ? `${parsed.skippedLines} lines skipped` : '',
+        parsed.points.length > free ? `truncated to ${free} (LED budget)` : '',
+      ].filter(Boolean);
+      notify(`Imported ${Math.min(parsed.points.length, free)} points on ${device.name}${notes.length ? ` (${notes.join(', ')})` : ''}`);
+    } catch (e) {
+      notify(`Import failed: ${errorText(e)}`, 'error');
+    }
+  };
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const used = totalLeds(strips);
 
@@ -33,6 +79,9 @@ function StripTree() {
             <span className="tabular font-mono text-[10px] text-zinc-500">
               {used}/{MAX_LEDS}
             </span>
+            <IconButton icon={FileUp} title="Import LED positions from CSV (x, y, z per line)" onClick={importPoints} />
+            <IconButton icon={FileDown} title="Export mapping as CSV" onClick={() => exportMapping('csv')} />
+            <IconButton icon={Braces} title="Export mapping as JSON" onClick={() => exportMapping('json')} />
             <IconButton icon={Plus} title="Add LED segment" onClick={addStrip} />
           </>
         }
@@ -65,11 +114,10 @@ function StripTree() {
                       }`}
                     >
                       {on && <span className="absolute inset-y-1 left-0 w-0.5 rounded-r bg-spatial" />}
-                      {s.shape === 'helix' ? (
-                        <Spline size={12} strokeWidth={1.75} className={on ? 'text-spatial' : 'text-zinc-600'} />
-                      ) : (
-                        <Minus size={12} strokeWidth={1.75} className={on ? 'text-spatial' : 'text-zinc-600'} />
-                      )}
+                      {(() => {
+                        const Icon = SHAPE_ICON[s.shape];
+                        return <Icon size={12} strokeWidth={1.75} className={on ? 'text-spatial' : 'text-zinc-600'} />;
+                      })()}
                       <span className={`truncate text-[11px] ${s.visible ? '' : 'text-zinc-600 line-through'}`}>{s.name}</span>
                       <span className="tabular ml-auto shrink-0 font-mono text-[10px] text-zinc-600">
                         G{s.gpio}·{s.ledCount}
@@ -80,6 +128,7 @@ function StripTree() {
                           title={s.visible ? 'Hide (outputs black)' : 'Show'}
                           onClick={() => updateStrip(s.id, { visible: !s.visible })}
                         />
+                        <IconButton icon={Copy} title="Duplicate" onClick={() => duplicateStrip(s.id)} />
                         <IconButton icon={Trash} title="Delete segment" danger onClick={() => removeStrip(s.id)} />
                       </div>
                     </div>

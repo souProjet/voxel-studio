@@ -1,4 +1,4 @@
-import { Cpu, Cuboid, FilePlus, FolderOpen, Moon, OctagonX, Radio, Save, ScanLine, Tablet, Workflow } from 'lucide-react';
+import { Cpu, Cuboid, FilePlus, FolderOpen, Moon, OctagonX, Radio, Redo2, Save, ScanLine, Tablet, Undo2, Workflow } from 'lucide-react';
 import type { ViewId } from '../../types/voxel';
 import { useVoxel, useVoxelActions } from '../../state/useVoxelStore';
 import { bridgeMode } from '../../services/tauriBridge';
@@ -38,12 +38,21 @@ function AudioMeter() {
 function ProjectControls() {
   const name = useVoxel((s) => s.projectName);
   const dirty = useVoxel((s) => s.dirty);
+  const canUndo = useVoxel((s) => s.canUndo);
+  const canRedo = useVoxel((s) => s.canRedo);
+  const { undo, redo } = useVoxelActions();
   const cmd = useProjectCommands();
   return (
     <div className="flex items-center gap-0.5 border-l border-line pl-2">
       <IconButton icon={FilePlus} title="New project" onClick={cmd.newProject} />
       <IconButton icon={FolderOpen} title="Open project (Cmd/Ctrl+O)" onClick={cmd.open} />
       <IconButton icon={Save} title="Save project (Cmd/Ctrl+S)" onClick={cmd.save} />
+      <span className={canUndo ? '' : 'pointer-events-none opacity-30'}>
+        <IconButton icon={Undo2} title="Undo (Cmd/Ctrl+Z)" onClick={undo} />
+      </span>
+      <span className={canRedo ? '' : 'pointer-events-none opacity-30'}>
+        <IconButton icon={Redo2} title="Redo (Cmd/Ctrl+Shift+Z)" onClick={redo} />
+      </span>
       <span className="ml-1.5 max-w-[160px] truncate text-[11px] text-zinc-300" title={dirty ? 'Unsaved changes (autosaved for recovery)' : 'Saved'}>
         {name}
       </span>

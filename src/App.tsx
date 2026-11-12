@@ -13,7 +13,7 @@ import { LiveControlPad } from './components/livepad/LiveControlPad';
 function Shell() {
   const store = useVoxelStoreRef();
   const view = useVoxel((s) => s.view);
-  const { setView, setBlackout, panic } = useVoxelActions();
+  const { setView, setBlackout, panic, undo, redo, tapTempo } = useVoxelActions();
   const cmd = useProjectCommands();
 
   useEffect(() => startEngine(store), [store]);
@@ -27,21 +27,29 @@ function Shell() {
         void cmd.save();
         return;
       }
+      const t = e.target as HTMLElement;
+      const typing = t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA';
+      if (mod && !typing && (e.key.toLowerCase() === 'z' || e.key.toLowerCase() === 'y')) {
+        e.preventDefault();
+        if (e.key.toLowerCase() === 'y' || e.shiftKey) redo();
+        else undo();
+        return;
+      }
       if (mod && e.key.toLowerCase() === 'o') {
         e.preventDefault();
         void cmd.open();
         return;
       }
-      const t = e.target as HTMLElement;
-      if (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || mod) return;
+      if (typing || mod) return;
       if (e.key === 'Escape') return panic();
       if (e.key.toLowerCase() === 'b') return setBlackout(!store.getState().blackout);
+      if (e.key.toLowerCase() === 't' && !e.repeat) return tapTempo();
       const i = Number(e.key) - 1;
       if (i >= 0 && i < VIEW_ORDER.length) setView(VIEW_ORDER[i]);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [setView, setBlackout, panic, cmd, store]);
+  }, [setView, setBlackout, panic, undo, redo, tapTempo, cmd, store]);
 
   return (
     <div className="flex h-full flex-col bg-canvas">
