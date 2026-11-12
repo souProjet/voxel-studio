@@ -1,0 +1,22 @@
+[package]
+name = "voxel-studio"
+version = "0.1.0"
+description = "Volumetric pixel mapping and real-time sensor modulation for addressable LEDs over UDP DDP"
+edition = "2021"
+rust-version = "1.77.2"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+
+[lints.clippy]
+panic            = "deny"
+unimplemented    = "deny"
+dbg_macro        = "deny"
+todo             = "warn"
+unwrap_used      = "warn"
+expect_used      = "warn"
+unwrap_in_result = "warn"
