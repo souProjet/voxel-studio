@@ -2,7 +2,9 @@ import type { DeviceRuntimeStats, EngineStats, Falloff, LEDStrip, ResolvedParams
 import type { VoxelStore } from '../state/useVoxelStore';
 import { CHIPSETS, DDP_SEND_HZ, EFFECT_DEFAULTS, LIMITER_RATIO, MAX_LEDS, TARGET_META } from './catalog';
 import { buildLayout, COLOR_ORDER_INDEX, type LedLayout } from './geometry';
-import { clamp, falloffWeight, grayBit, resolveParams, routeOutput, shadeInto, strobeLevel, type ChannelValues, type ModSums } from './shaderMath';
+import { clamp, falloffWeight, grayBit, resolveParams, routeOutput, shadeInto, strobeLevel, type ChannelValues, type ModSums, type RouteOutputs } from './shaderMath';
+import { GeneratorBank } from './generators';
+import { inputs, syncInputs } from './inputs';
 import { SensorPipeline, sensorIdOf } from './sensors';
 import { bridgeMode, encodeDdpPackets, probeDevice, sendDdpFrame } from './tauriBridge';
 
@@ -26,6 +28,10 @@ export const runtime = {
   mods: {} as ModSums,
   /** Normalized sensor channel values (0..1), refreshed at SENSOR_HZ. */
   sensorValues: {} as ChannelValues,
+  /** Sensor values plus generator outputs, refreshed every frame. */
+  channelValues: {} as ChannelValues,
+  /** Smoothed route outputs keyed by route id. */
+  routeOutputs: {} as RouteOutputs,
   time: 0,
   phase: 0,
   frames: new Map<string, DeviceFrame>(),
@@ -75,6 +81,7 @@ export function startEngine(store: VoxelStore): () => void {
   /** Last time requestAnimationFrame drove a frame; the worker clock takes over when it stalls. */
   let lastRafAt = 0;
   let lastStrips: LEDStrip[] | null = null;
+  const generators = new GeneratorBank();
   let curShader: ShaderId | null = null;
   let fromShader: ShaderId | null = null;
   let fadeStart = 0;
@@ -106,7 +113,17 @@ export function startEngine(store: VoxelStore): () => void {
       lastStrips = s.strips;
     }
     const { layout, colors } = runtime;
-    const { params, mods } = resolveParams(s.params, s.routes, runtime.sensorValues, s.manualStrobe);
+    // Generators run every frame (LFOs stay smooth); routes are smoothed per their time constant.
+    const channels = generators.tick(s.generators, runtime.sensorValues, dt, s.params.bpm, (kind, key) => (kind === 'osc' ? inputs.osc : inputs.midi).get(key));
+    runtime.channelValues = channels;
+    const outs: RouteOutputs = {};
+    for (const r of s.routes) {
+      const raw = routeOutput(r, channels);
+      const prev = runtime.routeOutputs[r.id];
+      outs[r.id] = prev === undefined || r.smoothMs <= 0 ? raw : prev + (raw - prev) * (1 - Math.exp((-dt * 1000) / r.smoothMs));
+    }
+    runtime.routeOutputs = outs;
+    const { params, mods } = resolveParams(s.params, s.routes, outs, s.manualStrobe);
     runtime.params = params;
     runtime.mods = mods;
     runtime.time += dt;
@@ -133,7 +150,7 @@ export function startEngine(store: VoxelStore): () => void {
       if (!r.enabled || !TARGET_META[r.target].spatial) continue;
       const sensor = s.sensors.find((x) => x.id === sensorIdOf(r.source));
       if (!sensor || !sensor.enabled) continue;
-      const v = routeOutput(r, runtime.sensorValues);
+      const v = outs[r.id] ?? 0;
       const [x, y, z] = sensor.position;
       const base = { x, y, z, radius: sensor.radius, falloff: sensor.falloff };
       if (r.target === 'local_intensity') {
@@ -376,9 +393,15 @@ export function startEngine(store: VoxelStore): () => void {
     if (now - lastRafAt > RAF_STALL_MS) step(now);
     if (++tick % ticksPerSensor !== 0) return;
     sensorT += sensorDt;
-    const values = pipeline.tick(store.getState().sensors, sensorT, sensorDt);
+    const st = store.getState();
+    syncInputs(
+      st.sensors.some((x) => x.source === 'osc') || st.generators.some((g) => g.kind === 'osc'),
+      st.sensors.some((x) => x.source === 'wled-sync'),
+      st.generators.some((g) => g.kind === 'midi'),
+    );
+    const values = pipeline.tick(st.sensors, sensorT, sensorDt);
     runtime.sensorValues = values;
-    store.setState({ sensorValues: values });
+    store.setState({ sensorValues: { ...runtime.channelValues, ...values } });
   };
 
   // Reachability: probe each WLED controller's HTTP port, one request in flight per device.

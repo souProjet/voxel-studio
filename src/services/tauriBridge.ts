@@ -67,11 +67,9 @@ interface NativeSendReport {
  */
 export async function sendDdpFrame(ip: string, port: number, rgb: Uint8Array, sequence: number): Promise<DdpSendReport> {
   if (bridgeMode === 'native') {
-    const report = await invoke<NativeSendReport>('send_ddp_packet', {
-      ip,
-      port,
-      sequence: sequence & 0x0f,
-      rgb: Array.from(rgb),
+    // Raw binary body: no JSON number array on the hot path.
+    const report = await invoke<NativeSendReport>('send_ddp_frame', rgb, {
+      headers: { 'x-ddp-ip': ip, 'x-ddp-port': String(port), 'x-ddp-seq': String(sequence & 0x0f) },
     });
     return { packets: report.packets, bytes: report.bytes, latencyMs: report.micros / 1000, native: true };
   }
@@ -214,4 +212,43 @@ export async function probeDevice(ip: string): Promise<ProbeResult> {
   } finally {
     window.clearTimeout(timer);
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Network inputs (OSC, WLED audio sync)                               */
+/* ------------------------------------------------------------------ */
+
+export interface InputsStatus {
+  oscPort: number | null;
+  oscError: string | null;
+  wledSync: boolean;
+  wledError: string | null;
+  midi: boolean;
+}
+
+export interface InputsSnapshot {
+  osc: [string, number][];
+  midi: [string, number][];
+  midiPorts: string[];
+  midiError: string | null;
+  wled: { fft: number[]; volume: number; peak: boolean; ageMs: number } | null;
+}
+
+/** UDP listeners and MIDI ports live in Rust; the browser build cannot open sockets. */
+export function configureInputs(oscPort: number | null, wledSync: boolean, midi: boolean): Promise<InputsStatus> {
+  if (bridgeMode !== 'native') {
+    const unavailable = 'Needs the desktop app (browsers cannot listen on UDP).';
+    return Promise.resolve({
+      oscPort: null,
+      oscError: oscPort === null ? null : unavailable,
+      wledSync: false,
+      wledError: wledSync ? unavailable : null,
+      midi: false,
+    });
+  }
+  return invoke<InputsStatus>('inputs_configure', { oscPort, wledSync, midi });
+}
+
+export function pollInputs(): Promise<InputsSnapshot> {
+  return invoke<InputsSnapshot>('inputs_poll');
 }

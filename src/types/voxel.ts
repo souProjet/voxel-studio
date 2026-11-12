@@ -86,6 +86,49 @@ export interface ModulationRoute {
   /** When true the normalized source is remapped to -1..+1 around its midpoint. */
   bipolar: boolean;
   enabled: boolean;
+  /** Input window: the route responds to the source between inMin and inMax (0..1). */
+  inMin: number;
+  inMax: number;
+  /** Output slew time constant in ms (0 = immediate). */
+  smoothMs: number;
+  /** Optional channel that scales `amount` (0..1), for modulating a modulation. */
+  amountSource: ChannelKey | null;
+}
+
+/* ------------------------------------------------------------------ */
+/* Generators: internal modulation sources                            */
+/* ------------------------------------------------------------------ */
+
+export type GeneratorKind = 'lfo' | 'envelope' | 'macro' | 'osc' | 'midi';
+export type LfoShape = 'sine' | 'triangle' | 'saw' | 'square' | 'random';
+
+/** One output channel, `${id}.out`. Fields unused by a kind keep their defaults. */
+export interface Generator {
+  id: string;
+  name: string;
+  kind: GeneratorKind;
+  enabled: boolean;
+  /** lfo */
+  shape: LfoShape;
+  rateHz: number;
+  /** lfo: follow the effect tempo, one cycle every `beats` beats. */
+  tempoSync: boolean;
+  beats: number;
+  /** lfo: phase offset, 0..1 of a cycle. */
+  phase: number;
+  /** envelope: retriggers when this channel rises above `threshold`. */
+  trigger: ChannelKey | null;
+  threshold: number;
+  attackMs: number;
+  decayMs: number;
+  sustain: number;
+  releaseMs: number;
+  /** macro: knob value, 0..1. */
+  value: number;
+  /** osc: incoming address. midi: control key (cc/<ch>/<n>, note/<ch>/<n>, pb/<ch>). Raw range mapped to 0..1. */
+  address: string;
+  min: number;
+  max: number;
 }
 
 /* ------------------------------------------------------------------ */
@@ -94,8 +137,8 @@ export interface ModulationRoute {
 
 export type SensorKind = 'audio' | 'gps' | 'gpio' | 'gyro';
 
-/** Registered signal sources (src/services/sensors.ts). Only the simulator ships today. */
-export type SensorSourceId = 'sim';
+/** Registered signal sources (src/services/sensors.ts). */
+export type SensorSourceId = 'sim' | 'mic' | 'wled-sync' | 'osc';
 
 export type Falloff = 'linear' | 'smooth' | 'gaussian';
 

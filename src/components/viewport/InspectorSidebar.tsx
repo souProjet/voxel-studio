@@ -3,7 +3,7 @@ import type { Axis, ColorOrder, Falloff, PaletteId, LEDStrip, LedChipset, Sensor
 import { useVoxel, useVoxelActions } from '../../state/useVoxelStore';
 import { CHIPSETS, KIND_META, PALETTES, SCENARIOS, SHADER_PRESETS, TARGET_META } from '../../services/catalog';
 import { activeCount, polylineVertices, stripLength } from '../../services/geometry';
-import { denormalize, manualDefault, SENSOR_SOURCES, sensorChannels, sensorIdOf } from '../../services/sensors';
+import { denormalize, manualDefault, oscAddressOf, SENSOR_SOURCES, sensorChannels, sensorIdOf, sourceStatus } from '../../services/sensors';
 import { ScrubInput } from '../ui/ScrubInput';
 import { Field, IconButton, SectionHeader, Segmented, Select, TextInput, Toggle } from '../ui/primitives';
 import { KIND_ICON } from '../ui/sensorIcons';
@@ -336,6 +336,20 @@ function Subheader({ children, right }: { children: string; right?: React.ReactN
   );
 }
 
+/** Re-read at the sensor tick (the parent re-renders with sensor values). */
+function SourceStatusLine({ sensorId }: { sensorId: string }) {
+  const st = sourceStatus.get(sensorId);
+  if (!st) return null;
+  return (
+    <div className={`flex items-center gap-1.5 text-[10px] ${st.ok ? 'text-net' : 'text-amber-300'}`}>
+      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${st.ok ? 'bg-net' : 'bg-amber-400'}`} />
+      <span className="truncate" title={st.text}>
+        {st.text}
+      </span>
+    </div>
+  );
+}
+
 function SensorSection({ sensor }: { sensor: SensorNode }) {
   const devices = useVoxel((s) => s.devices);
   const values = useVoxel((s) => s.sensorValues);
@@ -384,6 +398,18 @@ function SensorSection({ sensor }: { sensor: SensorNode }) {
           <Select<SensorSourceId> value={sensor.source} onChange={(v) => set({ source: v })} options={sources.map((x) => ({ value: x.id, label: x.label }))} />
         </Field>
         <p className="text-[10px] leading-snug text-zinc-600">{source.description}</p>
+        {!isSim && (
+          <SourceStatusLine sensorId={sensor.id} />
+        )}
+        {sensor.source === 'osc' && (
+          <div className="flex flex-col gap-0.5 rounded-[5px] border border-line bg-inset px-2 py-1.5 font-mono text-[10px] text-zinc-400">
+            {channels.map((c) => (
+              <span key={c.key} className="truncate">
+                {oscAddressOf(sensor.id, c.channelId)} <span className="text-zinc-600">{c.unit || '0..1'}</span>
+              </span>
+            ))}
+          </div>
+        )}
 
         <Subheader>Placement</Subheader>
         <Field label="Position">

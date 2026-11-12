@@ -1,4 +1,5 @@
 import type { ChannelKey, SensorChannel, SensorKind, SensorNode, SensorSourceId, SimScenario } from '../types/voxel';
+import { inputs, OSC_PORT } from './inputs';
 
 /* ------------------------------------------------------------------ */
 /* Source contract                                                     */
@@ -193,9 +194,154 @@ const simulatorSource: SensorSource = {
   },
 };
 
+/* ------------------------------------------------------------------ */
+/* Real sources                                                        */
+/* ------------------------------------------------------------------ */
+
+/** Live status line per sensor id, shown in the inspector (permission errors, waiting, live). */
+export const sourceStatus = new Map<string, { text: string; ok: boolean }>();
+
+/** Lower and upper edge of shared spectrum bin i (geometric midpoints between bin centers). */
+const binEdges = (i: number): [number, number] => [binFrequency(i - 0.5), binFrequency(i + 0.5)];
+
+const micSource: SensorSource = {
+  id: 'mic',
+  label: 'Microphone',
+  description: 'Default audio input of this computer, analyzed with a 4096-point FFT. The system asks for permission the first time.',
+  kinds: ['audio'],
+  open(getSensor) {
+    const id = getSensor().id;
+    const spectrum = new Float32Array(SPECTRUM_BINS);
+    let ctx: AudioContext | null = null;
+    let analyser: AnalyserNode | null = null;
+    let stream: MediaStream | null = null;
+    let data = new Uint8Array(0);
+    let disposed = false;
+    sourceStatus.set(id, { text: 'Requesting microphone access…', ok: false });
+    if (!navigator.mediaDevices?.getUserMedia) {
+      sourceStatus.set(id, { text: 'No audio capture API in this webview.', ok: false });
+    } else {
+      navigator.mediaDevices
+        .getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } })
+        .then((s) => {
+          if (disposed) return s.getTracks().forEach((t) => t.stop());
+          stream = s;
+          ctx = new AudioContext();
+          void ctx.resume();
+          analyser = ctx.createAnalyser();
+          analyser.fftSize = 4096;
+          analyser.smoothingTimeConstant = 0; // band envelopes smooth downstream
+          analyser.minDecibels = -90;
+          analyser.maxDecibels = -20;
+          ctx.createMediaStreamSource(s).connect(analyser);
+          data = new Uint8Array(analyser.frequencyBinCount);
+          sourceStatus.set(id, { text: `Live: ${s.getAudioTracks()[0]?.label || 'default input'}`, ok: true });
+        })
+        .catch((e: unknown) => {
+          if (!disposed) sourceStatus.set(id, { text: `Microphone unavailable: ${e instanceof Error ? e.message : String(e)}`, ok: false });
+        });
+    }
+    return {
+      read() {
+        if (!analyser || !ctx) return { spectrum: spectrum.fill(0) };
+        analyser.getByteFrequencyData(data);
+        const hzPerBin = ctx.sampleRate / analyser.fftSize;
+        for (let i = 0; i < SPECTRUM_BINS; i++) {
+          const [lo, hi] = binEdges(i);
+          const a = Math.max(1, Math.floor(lo / hzPerBin));
+          const b = Math.min(data.length - 1, Math.max(a, Math.ceil(hi / hzPerBin)));
+          let peak = 0;
+          for (let k = a; k <= b; k++) if (data[k] > peak) peak = data[k];
+          spectrum[i] = peak / 255;
+        }
+        return { spectrum };
+      },
+      dispose() {
+        disposed = true;
+        stream?.getTracks().forEach((t) => t.stop());
+        void (ctx as AudioContext | null)?.close();
+        sourceStatus.delete(id);
+      },
+    };
+  },
+};
+
+/** WLED GEQ channel ranges in Hz (audio_reactive.cpp, 22050 Hz mapping). */
+const WLED_GEQ_HZ: [number, number][] = [
+  [43, 86], [86, 129], [129, 216], [216, 301], [301, 430], [430, 560], [560, 818], [818, 1120],
+  [1120, 1421], [1421, 1895], [1895, 2412], [2412, 3015], [3015, 3704], [3704, 4479], [4479, 7106], [7106, 9259],
+];
+const WLED_BAND_OF_BIN = BIN_HZ.map((hz) => (hz < 43 ? 0 : WLED_GEQ_HZ.findIndex(([lo, hi]) => hz >= lo && hz < hi)));
+
+const wledSyncSource: SensorSource = {
+  id: 'wled-sync',
+  label: 'WLED audio sync',
+  description: 'Spectrum sent by a WLED controller with a microphone (Sound Reactive, Sync: Send). Multicast 239.0.0.1:11988, sync format v2.',
+  kinds: ['audio'],
+  open(getSensor) {
+    const id = getSensor().id;
+    const spectrum = new Float32Array(SPECTRUM_BINS);
+    return {
+      read() {
+        const w = inputs.wled;
+        const err = inputs.status.wledError;
+        if (!w || w.ageMs > 1000) {
+          sourceStatus.set(id, { text: err ?? 'Waiting for WLED audio sync packets on 239.0.0.1:11988…', ok: false });
+          return { spectrum: spectrum.fill(0) };
+        }
+        sourceStatus.set(id, { text: `Live: ${w.ageMs} ms old`, ok: true });
+        for (let i = 0; i < SPECTRUM_BINS; i++) {
+          const band = WLED_BAND_OF_BIN[i];
+          spectrum[i] = band < 0 ? 0 : w.fft[band] / 255;
+        }
+        return { spectrum };
+      },
+      dispose() {
+        sourceStatus.delete(id);
+      },
+    };
+  },
+};
+
+/** OSC address of a sensor channel: /voxel/<sensor id>/<channel id>. */
+export const oscAddressOf = (sensorId: string, channelId: string) => `/voxel/${sensorId}/${channelId}`;
+
+const oscSource: SensorSource = {
+  id: 'osc',
+  label: 'OSC',
+  description: `Values in the channel unit, sent over OSC (UDP ${OSC_PORT}) by the sensor's ESP32 or any OSC app, one address per channel.`,
+  kinds: ['audio', 'gps', 'gpio', 'gyro'],
+  open(getSensor) {
+    const id = getSensor().id;
+    return {
+      read() {
+        const s = getSensor();
+        const values: Record<string, number> = {};
+        let any = false;
+        for (const c of sensorChannels(s)) {
+          const v = inputs.osc.get(oscAddressOf(s.id, c.channelId));
+          if (v !== undefined) {
+            values[c.channelId] = v;
+            any = true;
+          }
+        }
+        const err = inputs.status.oscError;
+        sourceStatus.set(id, err ? { text: err, ok: false } : any ? { text: `Receiving on UDP ${OSC_PORT}`, ok: true } : { text: `Listening on UDP ${OSC_PORT}, nothing received yet`, ok: false });
+        return { values };
+      },
+      dispose() {
+        sourceStatus.delete(id);
+      },
+    };
+  },
+};
+
 /** Source registry. Register new hardware sources here. */
 export const SENSOR_SOURCES: Record<SensorSourceId, SensorSource> = {
   sim: simulatorSource,
+  mic: micSource,
+  'wled-sync': wledSyncSource,
+  osc: oscSource,
 };
 
 /* ------------------------------------------------------------------ */

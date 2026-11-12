@@ -5,6 +5,8 @@ import type {
   EffectParams,
   EngineStats,
   ESP32Device,
+  Generator,
+  GeneratorKind,
   LEDStrip,
   ModulationRoute,
   Notice,
@@ -18,9 +20,10 @@ import type {
   ViewId,
 } from '../types/voxel';
 import { EFFECT_DEFAULTS, KIND_META, MAX_LEDS, SCENARIOS } from '../services/catalog';
-import { allChannels, channelKey, sensorIdOf } from '../services/sensors';
+import { channelKey, sensorIdOf } from '../services/sensors';
 import { loadAutosave, pickProject, PROJECT_KEYS, type ProjectData } from '../services/project';
 import { normalizeStrip } from '../services/geometry';
+import { GENERATOR_META, modChannels, normalizeGenerator, ROUTE_DEFAULTS } from '../services/generators';
 
 export interface VoxelState {
   view: ViewId;
@@ -28,6 +31,7 @@ export interface VoxelState {
   devices: ESP32Device[];
   routes: ModulationRoute[];
   sensors: SensorNode[];
+  generators: Generator[];
   /** Normalized channel values (0..1), published by the engine at the sensor tick rate. */
   sensorValues: Record<string, number>;
   shader: ShaderId;
@@ -264,14 +268,16 @@ const INITIAL_SENSORS: SensorNode[] = [
   },
 ];
 
-const INITIAL_ROUTES: ModulationRoute[] = [
+const INITIAL_ROUTES: ModulationRoute[] = (
+  [
   { id: 'route-bass', source: 'mic-salon.bass', target: 'sphere_radius', curve: 'exp', amount: 0.85, bipolar: false, enabled: true },
   { id: 'route-gps', source: 'gps-neo.speed', target: 'shader_speed', curve: 'linear', amount: 0.65, bipolar: false, enabled: true },
   { id: 'route-high', source: 'mic-salon.high', target: 'color_shift', curve: 'scurve', amount: 0.45, bipolar: true, enabled: true },
   { id: 'route-btn', source: 'btn-18.pressed', target: 'strobe_override', curve: 'step', amount: 1, bipolar: false, enabled: true },
   { id: 'route-wave', source: 'mic-salon.bass', target: 'local_wave', curve: 'linear', amount: 1, bipolar: false, enabled: true },
   { id: 'route-local', source: 'mic-salon.mid', target: 'local_intensity', curve: 'scurve', amount: 0.6, bipolar: false, enabled: true },
-];
+  ] as Omit<ModulationRoute, keyof typeof ROUTE_DEFAULTS>[]
+).map((r) => ({ ...ROUTE_DEFAULTS, ...r }));
 
 const EMPTY_STATS: EngineStats = {
   renderFps: 0,
@@ -294,6 +300,7 @@ export function defaultProject(): ProjectData {
     devices: INITIAL_DEVICES,
     routes: INITIAL_ROUTES,
     sensors: INITIAL_SENSORS,
+    generators: [],
     shader: 'spherical_wave',
     params: { origin: [0, 1.2, 0], radius: 1.4, speed: 1, hueShift: 0, masterBrightness: 0.8, ...EFFECT_DEFAULTS },
     showRoom: true,
@@ -389,6 +396,14 @@ export function createVoxelStore(): VoxelStore {
 }
 
 export const totalLeds = (strips: LEDStrip[]) => strips.reduce((n, s) => n + s.ledCount, 0);
+
+/** Removes routes fed by matching channels and clears references to them elsewhere. */
+function dropSource(s: VoxelState, gone: (key: string) => boolean): Pick<VoxelState, 'routes' | 'generators'> {
+  return {
+    routes: s.routes.filter((r) => !gone(r.source)).map((r) => (r.amountSource && gone(r.amountSource) ? { ...r, amountSource: null } : r)),
+    generators: s.generators.map((g) => (g.trigger && gone(g.trigger) ? { ...g, trigger: null } : g)),
+  };
+}
 
 function createActions(store: VoxelStore) {
   const set = store.setState;
@@ -625,7 +640,7 @@ function createActions(store: VoxelStore) {
     removeSensor: (id: string) =>
       set((s) => ({
         sensors: s.sensors.filter((x) => x.id !== id),
-        routes: s.routes.filter((r) => sensorIdOf(r.source) !== id),
+        ...dropSource(s, (key) => sensorIdOf(key) === id),
         selectedSensorId: s.selectedSensorId === id ? null : s.selectedSensorId,
       })),
     setSensorManual: (id: string, channelId: string, raw: number) =>
@@ -658,14 +673,31 @@ function createActions(store: VoxelStore) {
     removeBand: (sensorId: string, bandId: string) =>
       set((s) => ({
         sensors: s.sensors.map((x) => (x.id === sensorId ? { ...x, bands: x.bands.filter((b) => b.id !== bandId) } : x)),
-        routes: s.routes.filter((r) => r.source !== channelKey(sensorId, bandId)),
+        ...dropSource(s, (key) => key === channelKey(sensorId, bandId)),
       })),
+
+    addGenerator: (kind: GeneratorKind) =>
+      set((s) => {
+        const n = s.generators.filter((g) => g.kind === kind).length + 1;
+        return { generators: [...s.generators, normalizeGenerator({ id: uid(kind), name: `${GENERATOR_META[kind].label} ${n}`, kind })] };
+      }),
+    updateGenerator: (id: string, patch: Partial<Generator>) =>
+      set((s) => ({ generators: s.generators.map((g) => (g.id === id ? { ...g, ...patch } : g)) })),
+    /** Live knob moves: no undo entry per step. */
+    setMacro: (id: string, value: number) =>
+      set((s) => ({ generators: s.generators.map((g) => (g.id === id ? { ...g, value } : g)) }), { transient: true }),
+    removeGenerator: (id: string) =>
+      set((s) => {
+        const rest = { ...s, generators: s.generators.filter((g) => g.id !== id) };
+        return dropSource(rest, (key) => sensorIdOf(key) === id);
+      }),
 
     selectRoute: (selectedRouteId: string | null) => set({ selectedRouteId }),
     addRoute: (init?: Partial<Omit<ModulationRoute, 'id'>>) =>
       set((s) => {
         const route: ModulationRoute = {
-          source: allChannels(s.sensors)[0]?.key ?? '',
+          ...ROUTE_DEFAULTS,
+          source: modChannels(s.sensors, s.generators)[0]?.key ?? '',
           target: 'master_brightness',
           curve: 'linear',
           amount: 0.5,

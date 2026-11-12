@@ -170,17 +170,29 @@ export function shapeRouteInput(route: Pick<ModulationRoute, 'curve' | 'bipolar'
 /** Normalized channel values (0..1) keyed by channel key. */
 export type ChannelValues = Record<string, number>;
 
+/** Maps a normalized source value through the route's input window, curve and amount. */
+export function routeTransfer(route: Pick<ModulationRoute, 'curve' | 'bipolar' | 'inMin' | 'inMax' | 'amount'>, x: number): number {
+  const w = route.inMax - route.inMin;
+  const windowed = w > 1e-6 ? clamp((x - route.inMin) / w) : x >= route.inMin ? 1 : 0;
+  return shapeRouteInput(route, windowed) * route.amount;
+}
+
+/** Instantaneous route output (before smoothing): transfer times the optional amount modulator. */
 export function routeOutput(route: ModulationRoute, values: ChannelValues): number {
   if (!route.enabled) return 0;
-  return shapeRouteInput(route, clamp(values[route.source] ?? 0)) * route.amount;
+  const depth = route.amountSource ? clamp(values[route.amountSource] ?? 0) : 1;
+  return routeTransfer(route, clamp(values[route.source] ?? 0)) * depth;
 }
+
+/** Route outputs keyed by route id, after smoothing (computed by the engine). */
+export type RouteOutputs = Record<string, number>;
 
 export type ModSums = Record<ModTarget, number>;
 
 export function resolveParams(
   base: EffectParams,
   routes: ModulationRoute[],
-  values: ChannelValues,
+  outputs: RouteOutputs,
   manualStrobe: boolean,
 ): { params: ResolvedParams; mods: ModSums } {
   const mods: ModSums = {
@@ -194,7 +206,7 @@ export function resolveParams(
     local_wave: 0,
   };
   // Spatial targets are summed for display only; the engine evaluates them per LED.
-  for (const r of routes) mods[r.target] += routeOutput(r, values);
+  for (const r of routes) mods[r.target] += outputs[r.id] ?? 0;
 
   const params: ResolvedParams = {
     ...base,

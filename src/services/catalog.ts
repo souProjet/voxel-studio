@@ -1,6 +1,7 @@
 import type { CurveType, EffectParams, LedChipset, ModTarget, PaletteId, SensorKind, ShaderPreset, SimScenario } from '../types/voxel';
 
-export const MAX_LEDS = 2000;
+/** Total LEDs per project. Shading 20k LEDs with a crossfade costs about 4 ms per frame on CPU. */
+export const MAX_LEDS = 16384;
 export const DDP_PORT = 4048;
 export const DDP_SEND_HZ = 40;
 export const GPS_MAX_KMH = 160;

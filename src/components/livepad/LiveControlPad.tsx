@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type PointerEvent } from 'react';
 import { Smartphone, Tablet, Zap } from 'lucide-react';
 import type { EffectParams, ShaderId } from '../../types/voxel';
 import { useVoxel, useVoxelActions, useVoxelStoreRef } from '../../state/useVoxelStore';
@@ -207,6 +207,34 @@ function StrobeButton({ big }: { big?: boolean }) {
   );
 }
 
+function MacroFaders() {
+  const generators = useVoxel((s) => s.generators);
+  const macros = useMemo(() => generators.filter((g) => g.kind === 'macro').slice(0, 4), [generators]);
+  const { setMacro } = useVoxelActions();
+  if (macros.length === 0) return null;
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      {macros.map((m) => (
+        <Fader key={m.id} label={m.name} color="#A3E635" value={m.value} onChange={(v) => setMacro(m.id, v)} readout={`${Math.round(m.value * 100)}%`} />
+      ))}
+    </div>
+  );
+}
+
+function TapButton() {
+  const bpm = useVoxel((s) => s.params.bpm);
+  const { tapTempo } = useVoxelActions();
+  return (
+    <button
+      type="button"
+      onPointerDown={tapTempo}
+      className="flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-audio/40 bg-inset font-mono text-[12px] tracking-[0.2em] text-audio active:bg-audio/20"
+    >
+      TAP <span className="tabular text-[11px] tracking-normal text-zinc-400">{bpm.toFixed(1)}</span>
+    </button>
+  );
+}
+
 function PresetGrid() {
   const shader = useVoxel((s) => s.shader);
   const { setShader, setParams } = useVoxelActions();
@@ -283,8 +311,10 @@ function PadSurface({ form }: { form: Form }) {
         </div>
         {height}
         <PresetGrid />
+        <MacroFaders />
         {bright}
-        <div className="mt-auto">
+        <div className="mt-auto flex flex-col gap-2">
+          <TapButton />
           <StrobeButton />
         </div>
       </div>
@@ -304,7 +334,9 @@ function PadSurface({ form }: { form: Form }) {
       <div className="flex flex-col gap-3">
         <div className="font-mono text-[10px] tracking-[0.3em] text-zinc-600">VOXEL // LIVE</div>
         <PresetGrid />
-        <div className="mt-auto">
+        <MacroFaders />
+        <div className="mt-auto flex flex-col gap-2">
+          <TapButton />
           <StrobeButton big />
         </div>
       </div>

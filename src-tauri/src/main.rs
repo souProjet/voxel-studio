@@ -3,6 +3,8 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 mod ddp;
+mod inputs;
+mod midi;
 
 use std::net::{IpAddr, SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
@@ -10,6 +12,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
+use tauri::ipc::{InvokeBody, Request};
 use tauri::{AppHandle, State};
 use tauri_plugin_dialog::DialogExt;
 
@@ -24,17 +27,26 @@ struct SendReport {
     micros: u64,
 }
 
-/// Encodes `rgb` as DDP datagrams and sends them to `ip:port`.
-/// Invoked from `src/services/tauriBridge.ts` at the engine's output rate.
+fn header<'a>(request: &'a Request<'_>, name: &str) -> Result<&'a str, String> {
+    request
+        .headers()
+        .get(name)
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| format!("missing header {name}"))
+}
+
+/// Encodes one RGB frame as DDP datagrams and sends them to the target device.
+/// The frame travels as a raw binary IPC body (no JSON number array); the target comes in
+/// the `x-ddp-ip`, `x-ddp-port` and `x-ddp-seq` headers. Called from `src/services/tauriBridge.ts`.
 #[tauri::command]
-async fn send_ddp_packet(
-    state: State<'_, DdpState>,
-    ip: String,
-    port: u16,
-    sequence: u8,
-    rgb: Vec<u8>,
-) -> Result<SendReport, String> {
+async fn send_ddp_frame(state: State<'_, DdpState>, request: Request<'_>) -> Result<SendReport, String> {
+    let InvokeBody::Raw(rgb) = request.body() else {
+        return Err("expected a raw RGB body".to_string());
+    };
+    let ip = header(&request, "x-ddp-ip")?;
     let addr: IpAddr = ip.trim().parse().map_err(|e| format!("invalid IP '{ip}': {e}"))?;
+    let port: u16 = header(&request, "x-ddp-port")?.parse().map_err(|e| format!("invalid port: {e}"))?;
+    let sequence: u8 = header(&request, "x-ddp-seq")?.parse().map_err(|e| format!("invalid sequence: {e}"))?;
     let target = SocketAddr::new(addr, port);
     let mut guard = state.0.lock().map_err(|_| "DDP socket lock poisoned".to_string())?;
     if guard.is_none() {
@@ -45,7 +57,7 @@ async fn send_ddp_packet(
     };
     let started = Instant::now();
     let stats = sender
-        .send_frame(target, &rgb, sequence)
+        .send_frame(target, rgb, sequence)
         .map_err(|e| format!("send to {target} failed: {e}"))?;
     Ok(SendReport {
         packets: stats.packets,
@@ -200,13 +212,29 @@ async fn probe_device(ip: String, port: u16, timeout_ms: u64) -> Result<Option<u
     .map_err(|e| format!("probe task failed: {e}"))
 }
 
+/// Starts or stops the OSC listener (`osc_port`, None = off), the WLED audio sync listener
+/// and MIDI input (all ports, hot-plugged).
+#[tauri::command]
+fn inputs_configure(state: State<'_, inputs::Inputs>, osc_port: Option<u16>, wled_sync: bool, midi: bool) -> inputs::InputsStatus {
+    state.configure(osc_port, wled_sync, midi)
+}
+
+/// Latest network input values, polled by the sensor tick.
+#[tauri::command]
+fn inputs_poll(state: State<'_, inputs::Inputs>) -> inputs::InputsSnapshot {
+    state.poll()
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(DdpState::default())
         .manage(ProjectFile::default())
+        .manage(inputs::Inputs::default())
         .invoke_handler(tauri::generate_handler![
-            send_ddp_packet,
+            send_ddp_frame,
+            inputs_configure,
+            inputs_poll,
             save_project,
             open_project,
             forget_project_file,

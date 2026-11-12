@@ -1,6 +1,7 @@
-import type { EffectParams, ESP32Device, LEDStrip, ModulationRoute, SensorNode, ShaderId } from '../types/voxel';
+import type { EffectParams, ESP32Device, Generator, LEDStrip, ModulationRoute, SensorNode, ShaderId } from '../types/voxel';
 import { EFFECT_DEFAULTS, SHADER_PRESETS } from './catalog';
 import { normalizeStrip } from './geometry';
+import { normalizeGenerator, ROUTE_DEFAULTS } from './generators';
 import type { VoxelStore } from '../state/useVoxelStore';
 
 export const PROJECT_FORMAT = 'voxel-studio';
@@ -14,6 +15,7 @@ export interface ProjectData {
   devices: ESP32Device[];
   routes: ModulationRoute[];
   sensors: SensorNode[];
+  generators: Generator[];
   shader: ShaderId;
   params: EffectParams;
   showRoom: boolean;
@@ -26,7 +28,7 @@ interface ProjectFile extends ProjectData {
   savedAt: string;
 }
 
-export const PROJECT_KEYS: (keyof ProjectData)[] = ['strips', 'devices', 'routes', 'sensors', 'shader', 'params', 'showRoom', 'showSphere'];
+export const PROJECT_KEYS: (keyof ProjectData)[] = ['strips', 'devices', 'routes', 'sensors', 'generators', 'shader', 'params', 'showRoom', 'showSphere'];
 
 export function pickProject(source: ProjectData): ProjectData {
   return {
@@ -34,6 +36,7 @@ export function pickProject(source: ProjectData): ProjectData {
     devices: source.devices,
     routes: source.routes,
     sensors: source.sensors,
+    generators: source.generators,
     shader: source.shader,
     params: source.params,
     showRoom: source.showRoom,
@@ -76,8 +79,18 @@ export function parseProject(text: string): ProjectData {
   const p = f.params;
   if (!p || !isVec3(p.origin)) throw new Error('Project effect parameters are invalid.');
   if (!SHADER_PRESETS.some((x) => x.id === f.shader)) throw new Error(`Unknown shader "${String(f.shader)}".`);
-  // Files saved before newer strip fields existed get their defaults.
-  return pickProject({ ...(f as ProjectFile), params: { ...EFFECT_DEFAULTS, ...p }, strips: (f.strips as LEDStrip[]).map(normalizeStrip) });
+  const generators = isArray(f.generators) ? (f.generators as Generator[]) : [];
+  for (const g of generators) {
+    if (typeof g.id !== 'string' || !['lfo', 'envelope', 'macro', 'osc', 'midi'].includes(g.kind)) throw new Error(`Invalid generator "${String(g.name ?? g.id)}".`);
+  }
+  // Files saved before newer fields existed get their defaults.
+  return pickProject({
+    ...(f as ProjectFile),
+    params: { ...EFFECT_DEFAULTS, ...p },
+    strips: (f.strips as LEDStrip[]).map(normalizeStrip),
+    routes: (f.routes as ModulationRoute[]).map((r) => ({ ...ROUTE_DEFAULTS, ...r })),
+    generators: generators.map(normalizeGenerator),
+  });
 }
 
 export interface AutosaveEntry {
