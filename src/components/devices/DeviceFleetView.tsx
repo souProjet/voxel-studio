@@ -36,6 +36,7 @@ function Metric({ label, value, unit, color = 'text-zinc-200' }: { label: string
 function DeviceCard({ device }: { device: ESP32Device }) {
   const strips = useVoxel((s) => s.strips);
   const stats = useVoxel((s) => s.stats.devices[device.id]);
+  const health = useVoxel((s) => s.health[device.id]);
   const allSensors = useVoxel((s) => s.sensors);
   const values = useVoxel((s) => s.sensorValues);
   const hosted = useMemo(() => allSensors.filter((x) => x.deviceId === device.id), [allSensors, device.id]);
@@ -53,11 +54,33 @@ function DeviceCard({ device }: { device: ESP32Device }) {
   return (
     <Card className="flex flex-col">
       <div className="flex items-center gap-2 border-b border-line px-3 py-2">
-        <span className={`h-1.5 w-1.5 rounded-full ${device.online ? 'bg-net shadow-[0_0_6px_#10b981]' : 'bg-zinc-600'}`} />
+        <span
+          title={
+            device.firmware !== 'WLED'
+              ? 'Not probed (custom firmware)'
+              : !health
+                ? 'Probing…'
+                : health.reachable
+                  ? `Answers on HTTP :80 in ${health.rttMs.toFixed(0)} ms`
+                  : 'No answer on HTTP :80'
+          }
+          className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+            health?.reachable ? 'bg-net shadow-[0_0_6px_#10b981]' : health?.reachable === false ? 'bg-red-500 shadow-[0_0_6px_#ef4444]' : 'bg-zinc-600'
+          }`}
+        />
         <div className="min-w-0">
           <div className="truncate text-[12px] font-medium text-zinc-100">{device.name}</div>
           <div className="font-mono text-[10px] text-zinc-500">
-            {device.chip} · {device.firmware}
+            {device.chip} · {device.firmware} ·{' '}
+            {device.firmware !== 'WLED' ? (
+              <span>not probed</span>
+            ) : !health ? (
+              <span>probing…</span>
+            ) : health.reachable ? (
+              <span className="text-net">reachable {health.rttMs.toFixed(0)} ms</span>
+            ) : (
+              <span className="text-red-400">unreachable</span>
+            )}
           </div>
         </div>
         <span
@@ -67,7 +90,7 @@ function DeviceCard({ device }: { device: ESP32Device }) {
         </span>
         <button
           type="button"
-          title={device.online ? 'Take offline (stop output)' : 'Bring online'}
+          title={device.online ? 'Output enabled: click to stop streaming to this device' : 'Output disabled: click to stream to this device'}
           onClick={() => set({ online: !device.online })}
           className={`flex h-6 w-6 items-center justify-center rounded-[5px] border ${device.online ? 'border-net/40 text-net' : 'border-line text-zinc-600'}`}
         >
@@ -88,6 +111,11 @@ function DeviceCard({ device }: { device: ESP32Device }) {
           </span>
         </div>
 
+        {(stats?.errors ?? 0) > 0 && (
+          <div className="rounded-[5px] border border-red-500/40 bg-red-500/10 px-2 py-1.5 font-mono text-[10px] text-red-300">
+            {stats?.errors} send error{stats?.errors === 1 ? '' : 's'} · {stats?.lastError}
+          </div>
+        )}
         {isDdp ? (
           <div className="grid grid-cols-3 gap-1.5">
             <Metric label="Out FPS" value={(stats?.fps ?? 0).toFixed(0)} color="text-net" />

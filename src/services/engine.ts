@@ -4,7 +4,7 @@ import { CHIPSETS, DDP_SEND_HZ, LIMITER_RATIO, MAX_LEDS, TARGET_META } from './c
 import { buildLayout, type LedLayout } from './geometry';
 import { falloffWeight, grayBit, resolveParams, routeOutput, shadeInto, strobeLevel, type ChannelValues, type ModSums } from './shaderMath';
 import { SensorPipeline, sensorIdOf } from './sensors';
-import { bridgeMode, encodeDdpPackets, sendDdpFrame } from './tauriBridge';
+import { bridgeMode, encodeDdpPackets, probeDevice, sendDdpFrame } from './tauriBridge';
 
 export interface DeviceFrame {
   rgb: Uint8Array;
@@ -29,11 +29,17 @@ export const runtime = {
   time: 0,
   phase: 0,
   frames: new Map<string, DeviceFrame>(),
-  sendErrors: 0,
-  lastError: '',
 };
 
 const SENSOR_HZ = 20;
+const PROBE_INTERVAL_MS = 3000;
+/**
+ * Output clock. requestAnimationFrame stops when the window is hidden or minimized, which
+ * would freeze the LEDs mid-show. A dedicated worker posts ticks at the DDP rate (worker
+ * timers are not throttled like page timers); a tick runs a frame only when rAF has not.
+ */
+const CLOCK_WORKER_SRC = `setInterval(() => postMessage(0), ${Math.round(1000 / DDP_SEND_HZ)});`;
+const RAF_STALL_MS = 60;
 /** Local wave ring: propagation speed (m/s) and gaussian width (m). */
 const WAVE_SPEED = 3.5;
 const WAVE_WIDTH = 0.15;
@@ -59,11 +65,15 @@ interface DeviceCounters {
   latencySum: number;
   latencyN: number;
   packets: number;
+  errors: number;
+  lastError: string;
 }
 
 export function startEngine(store: VoxelStore): () => void {
   let raf = 0;
   let last = performance.now();
+  /** Last time requestAnimationFrame drove a frame; the worker clock takes over when it stalls. */
+  let lastRafAt = 0;
   let lastStrips: LEDStrip[] | null = null;
   let lastSend = 0;
   let lastStats = performance.now();
@@ -76,12 +86,11 @@ export function startEngine(store: VoxelStore): () => void {
 
   const counter = (id: string) => {
     let c = counters.get(id);
-    if (!c) counters.set(id, (c = { frames: 0, latencySum: 0, latencyN: 0, packets: 0 }));
+    if (!c) counters.set(id, (c = { frames: 0, latencySum: 0, latencyN: 0, packets: 0, errors: 0, lastError: '' }));
     return c;
   };
 
-  const frame = (now: number) => {
-    raf = requestAnimationFrame(frame);
+  const step = (now: number) => {
     const dt = Math.min(0.1, (now - last) / 1000);
     last = now;
     renderFrames++;
@@ -133,7 +142,7 @@ export function startEngine(store: VoxelStore): () => void {
       const end = r.start + r.count;
       for (let i = r.start; i < end; i++) {
         const k = i * 3;
-        if (!r.visible) {
+        if (!r.visible || s.blackout) {
           colors[k] = colors[k + 1] = colors[k + 2] = 0;
         } else if (s.scan.active) {
           const v = grayBit(i, s.scan.bit) ? 1 : 0;
@@ -198,7 +207,8 @@ export function startEngine(store: VoxelStore): () => void {
     }
 
     // 3. DDP output at a fixed rate, one frame per DDP device.
-    if (now - lastSend >= 1000 / DDP_SEND_HZ) {
+    // Small tolerance so a clock tick arriving a few ms early does not skip a whole frame.
+    if (now - lastSend >= 1000 / DDP_SEND_HZ - 4) {
       lastSend = now;
       ddpFrames++;
       for (const d of s.devices) {
@@ -225,8 +235,8 @@ export function startEngine(store: VoxelStore): () => void {
             c.latencyN++;
           })
           .catch((err: unknown) => {
-            runtime.sendErrors++;
-            runtime.lastError = String(err);
+            c.errors++;
+            c.lastError = err instanceof Error ? err.message : String(err);
           });
       }
     }
@@ -253,6 +263,8 @@ export function startEngine(store: VoxelStore): () => void {
           limited: load.limited,
           packetsPerFrame: c.packets,
           rssi: bridgeMode === 'web' ? Math.round(base + Math.sin(now / 1700 + base) * 3) : Number.NaN,
+          errors: c.errors,
+          lastError: c.lastError,
         };
         c.frames = 0;
         c.latencySum = 0;
@@ -280,22 +292,56 @@ export function startEngine(store: VoxelStore): () => void {
       store.setState({ stats });
     }
   };
+  const frame = (now: number) => {
+    raf = requestAnimationFrame(frame);
+    lastRafAt = now;
+    step(now);
+  };
   raf = requestAnimationFrame(frame);
 
   // Sensor tick: every source, simulated or real, goes through the same pipeline.
   const pipeline = new SensorPipeline();
-  let sensorT = 0;
   const sensorDt = 1 / SENSOR_HZ;
-  const sim = window.setInterval(() => {
+  const ticksPerSensor = Math.max(1, Math.round(DDP_SEND_HZ / SENSOR_HZ));
+  let sensorT = 0;
+  let tick = 0;
+
+  const clockUrl = URL.createObjectURL(new Blob([CLOCK_WORKER_SRC], { type: 'text/javascript' }));
+  const clock = new Worker(clockUrl);
+  clock.onmessage = () => {
+    const now = performance.now();
+    if (now - lastRafAt > RAF_STALL_MS) step(now);
+    if (++tick % ticksPerSensor !== 0) return;
     sensorT += sensorDt;
     const values = pipeline.tick(store.getState().sensors, sensorT, sensorDt);
     runtime.sensorValues = values;
     store.setState({ sensorValues: values });
-  }, 1000 / SENSOR_HZ);
+  };
+
+  // Reachability: probe each WLED controller's HTTP port, one request in flight per device.
+  const probing = new Set<string>();
+  const probeAll = () => {
+    for (const d of store.getState().devices) {
+      if (d.firmware !== 'WLED' || probing.has(d.id)) continue;
+      probing.add(d.id);
+      const ip = d.ip;
+      probeDevice(ip)
+        .then((r) => {
+          if (store.getState().devices.find((x) => x.id === d.id)?.ip !== ip) return; // IP edited meanwhile
+          store.setState((st) => ({ health: { ...st.health, [d.id]: { ...r, checkedAt: Date.now() } } }));
+        })
+        .catch(() => undefined)
+        .finally(() => probing.delete(d.id));
+    }
+  };
+  probeAll();
+  const probeTimer = window.setInterval(probeAll, PROBE_INTERVAL_MS);
 
   return () => {
     cancelAnimationFrame(raf);
-    window.clearInterval(sim);
+    clock.terminate();
+    URL.revokeObjectURL(clockUrl);
+    window.clearInterval(probeTimer);
     pipeline.dispose();
   };
 }

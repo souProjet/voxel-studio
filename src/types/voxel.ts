@@ -167,6 +167,22 @@ export interface DeviceRuntimeStats {
   limited: boolean;
   packetsPerFrame: number;
   rssi: number;
+  /** Failed sends since the app started. */
+  errors: number;
+  lastError: string;
+}
+
+/** Result of the periodic reachability probe (WLED HTTP port). */
+export interface DeviceHealth {
+  reachable: boolean;
+  rttMs: number;
+  checkedAt: number;
+}
+
+export interface Notice {
+  id: number;
+  text: string;
+  tone: 'info' | 'error';
 }
 
 export interface EngineStats {

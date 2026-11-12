@@ -87,3 +87,98 @@ export async function sendDdpFrame(ip: string, port: number, rgb: Uint8Array, se
 export function toHex(byte: number): string {
   return byte.toString(16).toUpperCase().padStart(2, '0');
 }
+
+/* ------------------------------------------------------------------ */
+/* Project files                                                       */
+/* ------------------------------------------------------------------ */
+
+export interface SavedFile {
+  name: string;
+  /** Display path under Tauri (never sent back to Rust), null in the browser. */
+  path: string | null;
+}
+
+/**
+ * Saves a project. Under Tauri the Rust side owns the file path: it reuses the file picked
+ * earlier in this run (Cmd+S) or opens a native Save dialog. In the browser the file is
+ * downloaded. Returns null when the user canceled.
+ */
+export async function saveProjectFile(contents: string, suggestedName: string, saveAs = false): Promise<SavedFile | null> {
+  if (bridgeMode === 'native') {
+    return invoke<SavedFile | null>('save_project', { contents, suggestedName, saveAs });
+  }
+  const url = URL.createObjectURL(new Blob([contents], { type: 'application/json' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = suggestedName;
+  a.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return { name: suggestedName, path: null };
+}
+
+/** Returns the chosen file, or null when the user canceled. */
+export async function openProjectFile(): Promise<(SavedFile & { contents: string }) | null> {
+  if (bridgeMode === 'native') {
+    return invoke<(SavedFile & { contents: string }) | null>('open_project');
+  }
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json,application/json';
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (!file) return resolve(null);
+      file.text().then((contents) => resolve({ name: file.name, path: null, contents }), () => resolve(null));
+    };
+    input.oncancel = () => resolve(null);
+    input.click();
+  });
+}
+
+/** New project: under Tauri, the next save asks for a file again. */
+export async function forgetProjectFile(): Promise<void> {
+  if (bridgeMode === 'native') await invoke('forget_project_file');
+}
+
+/** Yes/no confirmation. WKWebView does not reliably implement window.confirm, so Tauri uses the native dialog. */
+export async function confirmDialog(message: string): Promise<boolean> {
+  if (bridgeMode === 'native') {
+    const { ask } = await import('@tauri-apps/plugin-dialog');
+    return ask(message, { title: 'VOXEL // STUDIO', kind: 'warning' });
+  }
+  return window.confirm(message);
+}
+
+/* ------------------------------------------------------------------ */
+/* Device reachability                                                 */
+/* ------------------------------------------------------------------ */
+
+export interface ProbeResult {
+  reachable: boolean;
+  rttMs: number;
+}
+
+const PROBE_TIMEOUT_MS = 1500;
+
+/**
+ * Checks that a WLED controller answers on its HTTP port (80).
+ * Native: TCP connect from Rust. Web: an opaque no-cors request, which resolves only when
+ * the host accepted the connection.
+ */
+export async function probeDevice(ip: string): Promise<ProbeResult> {
+  if (bridgeMode === 'native') {
+    const micros = await invoke<number | null>('probe_device', { ip, port: 80, timeoutMs: PROBE_TIMEOUT_MS });
+    return micros === null ? { reachable: false, rttMs: 0 } : { reachable: true, rttMs: micros / 1000 };
+  }
+  const ctrl = new AbortController();
+  const timer = window.setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
+  const t0 = performance.now();
+  try {
+    await fetch(`http://${ip}/`, { mode: 'no-cors', cache: 'no-store', signal: ctrl.signal });
+    return { reachable: true, rttMs: performance.now() - t0 };
+  } catch {
+    return { reachable: false, rttMs: 0 };
+  } finally {
+    window.clearTimeout(timer);
+  }
+}

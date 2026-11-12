@@ -1,8 +1,10 @@
-import { Cpu, Cuboid, Radio, ScanLine, Tablet, Workflow } from 'lucide-react';
+import { Cpu, Cuboid, FilePlus, FolderOpen, Moon, OctagonX, Radio, Save, ScanLine, Tablet, Workflow } from 'lucide-react';
 import type { ViewId } from '../../types/voxel';
 import { useVoxel, useVoxelActions } from '../../state/useVoxelStore';
 import { bridgeMode } from '../../services/tauriBridge';
 import { denormalize, sensorChannels } from '../../services/sensors';
+import { useProjectCommands } from '../../state/useProjectCommands';
+import { IconButton } from './primitives';
 
 const TABS: { id: ViewId; label: string; key: string; icon: typeof Cuboid }[] = [
   { id: 'studio', label: 'Studio 3D', key: '1', icon: Cuboid },
@@ -33,6 +35,43 @@ function AudioMeter() {
   );
 }
 
+function ProjectControls() {
+  const name = useVoxel((s) => s.projectName);
+  const dirty = useVoxel((s) => s.dirty);
+  const cmd = useProjectCommands();
+  return (
+    <div className="flex items-center gap-0.5 border-l border-line pl-2">
+      <IconButton icon={FilePlus} title="New project" onClick={cmd.newProject} />
+      <IconButton icon={FolderOpen} title="Open project (Cmd/Ctrl+O)" onClick={cmd.open} />
+      <IconButton icon={Save} title="Save project (Cmd/Ctrl+S)" onClick={cmd.save} />
+      <span className="ml-1.5 max-w-[160px] truncate text-[11px] text-zinc-300" title={dirty ? 'Unsaved changes (autosaved for recovery)' : 'Saved'}>
+        {name}
+      </span>
+      {dirty && <span className="ml-1 h-1.5 w-1.5 shrink-0 rounded-full bg-gps" title="Unsaved changes" />}
+    </div>
+  );
+}
+
+/** Devices that failed a send or did not answer the last reachability probe. */
+function FaultBadge() {
+  const devices = useVoxel((s) => s.devices);
+  const health = useVoxel((s) => s.health);
+  const stats = useVoxel((s) => s.stats.devices);
+  const { setView } = useVoxelActions();
+  const faulty = devices.filter((d) => (stats[d.id]?.errors ?? 0) > 0 || health[d.id]?.reachable === false);
+  if (faulty.length === 0) return null;
+  return (
+    <button
+      type="button"
+      onClick={() => setView('devices')}
+      title={faulty.map((d) => d.name).join(', ')}
+      className="flex h-6 items-center gap-1 rounded-[5px] border border-red-500/40 bg-red-500/10 px-2 font-mono text-[10px] text-red-400"
+    >
+      {faulty.length} FAULT{faulty.length > 1 ? 'S' : ''}
+    </button>
+  );
+}
+
 export function TopHeader() {
   const view = useVoxel((s) => s.view);
   const stats = useVoxel((s) => s.stats);
@@ -40,7 +79,8 @@ export function TopHeader() {
   const gpsValue = useVoxel((s) => (gpsSensor ? s.sensorValues[`${gpsSensor.id}.speed`] ?? 0 : 0));
   const gps = gpsSensor ? denormalize(sensorChannels(gpsSensor)[0], gpsValue) : 0;
   const ddpOutput = useVoxel((s) => s.ddpOutput);
-  const { setView, toggle } = useVoxelActions();
+  const blackout = useVoxel((s) => s.blackout);
+  const { setView, toggle, setBlackout, panic } = useVoxelActions();
 
   return (
     <header className="flex h-10 shrink-0 items-center gap-3 border-b border-line bg-panel px-3">
@@ -55,6 +95,7 @@ export function TopHeader() {
           VOXEL <span className="text-zinc-600">//</span> STUDIO
         </span>
       </div>
+      <ProjectControls />
 
       <nav className="flex h-full items-stretch">
         {TABS.map((t) => {
@@ -77,10 +118,37 @@ export function TopHeader() {
       </nav>
 
       <div className="ml-auto flex items-center gap-4">
+        <FaultBadge />
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setBlackout(!blackout)}
+            title="Blackout (B): send black to every LED, streaming continues"
+            className={`flex h-6 items-center gap-1.5 rounded-[5px] border px-2 font-mono text-[10px] tracking-wider transition-colors ${
+              blackout ? 'border-red-500 bg-red-500/20 text-red-300' : 'border-line text-zinc-400 hover:border-line-hi'
+            }`}
+          >
+            <Moon size={11} strokeWidth={2} />
+            {blackout ? 'BLACKOUT ON' : 'BLACKOUT'}
+          </button>
+          <button
+            type="button"
+            onClick={panic}
+            title="Panic (Esc): blackout, strobe off, scan off, buttons released"
+            className="flex h-6 items-center gap-1 rounded-[5px] border border-red-500/40 px-2 font-mono text-[10px] tracking-wider text-red-400 hover:bg-red-500/10"
+          >
+            <OctagonX size={11} strokeWidth={2} />
+            PANIC
+          </button>
+        </div>
         <button
           type="button"
           onClick={() => toggle('ddpOutput')}
-          title={ddpOutput ? 'DDP output live: click to blackout network output' : 'DDP output paused'}
+          title={
+            ddpOutput
+              ? 'Streaming DDP: click to release (controllers fall back to their own effects)'
+              : 'Released: click to resume DDP streaming'
+          }
           className={`flex h-6 items-center gap-1.5 rounded-[5px] border px-2 font-mono text-[10px] transition-colors ${
             ddpOutput ? 'border-net/40 bg-net/10 text-net' : 'border-line text-zinc-500'
           }`}

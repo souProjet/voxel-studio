@@ -1,11 +1,13 @@
 import { createContext, createElement, useContext, useRef, useSyncExternalStore, type ReactNode } from 'react';
 import type {
   AudioBand,
+  DeviceHealth,
   EffectParams,
   EngineStats,
   ESP32Device,
   LEDStrip,
   ModulationRoute,
+  Notice,
   ScanState,
   SensorKind,
   SensorNode,
@@ -15,6 +17,7 @@ import type {
 } from '../types/voxel';
 import { KIND_META, MAX_LEDS, SCENARIOS } from '../services/catalog';
 import { allChannels, channelKey, sensorIdOf } from '../services/sensors';
+import { loadAutosave, PROJECT_KEYS, type ProjectData } from '../services/project';
 
 export interface VoxelState {
   view: ViewId;
@@ -35,6 +38,15 @@ export interface VoxelState {
   manualStrobe: boolean;
   scan: ScanState;
   stats: EngineStats;
+  /** Outputs black on every LED while still streaming, so controllers stay in realtime mode. */
+  blackout: boolean;
+  projectName: string;
+  /** Native file path of the open project; null in the browser or before the first save. */
+  projectPath: string | null;
+  /** Project data changed since the last save or open. */
+  dirty: boolean;
+  health: Record<string, DeviceHealth>;
+  notice: Notice | null;
 }
 
 type Update = Partial<VoxelState> | ((s: VoxelState) => Partial<VoxelState>);
@@ -254,25 +266,39 @@ const EMPTY_STATS: EngineStats = {
   devices: {},
 };
 
-function initialState(): VoxelState {
+export function defaultProject(): ProjectData {
   return {
-    view: 'studio',
     strips: INITIAL_STRIPS,
     devices: INITIAL_DEVICES,
     routes: INITIAL_ROUTES,
     sensors: INITIAL_SENSORS,
-    sensorValues: {},
     shader: 'spherical_wave',
     params: { origin: [0, 1.2, 0], radius: 1.4, speed: 1, hueShift: 0, masterBrightness: 0.8 },
-    selectedStripId: 'strip-helix',
-    selectedSensorId: null,
-    selectedRouteId: 'route-bass',
     showRoom: true,
     showSphere: true,
+  };
+}
+
+/** Restores the autosaved project when there is one (crash or reload recovery). */
+function initialState(): VoxelState {
+  const saved = loadAutosave();
+  return {
+    view: 'studio',
+    ...(saved?.data ?? defaultProject()),
+    sensorValues: {},
+    selectedStripId: saved ? null : 'strip-helix',
+    selectedSensorId: null,
+    selectedRouteId: saved ? null : 'route-bass',
     ddpOutput: true,
     manualStrobe: false,
     scan: { active: false, bit: 0 },
     stats: EMPTY_STATS,
+    blackout: false,
+    projectName: saved?.name ?? 'Untitled',
+    projectPath: saved?.path ?? null,
+    dirty: saved?.dirty ?? false,
+    health: {},
+    notice: null,
   };
 }
 
@@ -283,7 +309,9 @@ export function createVoxelStore(): VoxelStore {
     getState: () => state,
     setState(update) {
       const patch = typeof update === 'function' ? update(state) : update;
+      const prev = state;
       state = { ...state, ...patch };
+      if (!('dirty' in patch) && PROJECT_KEYS.some((k) => state[k] !== prev[k])) state.dirty = true;
       listeners.forEach((l) => l());
     },
     subscribe(listener) {
@@ -308,6 +336,42 @@ function createActions(store: VoxelStore) {
         return { params: { ...s.params, origin } };
       }),
     setManualStrobe: (manualStrobe: boolean) => set({ manualStrobe }),
+    setBlackout: (blackout: boolean) => set({ blackout }),
+    /** Kills every momentary or risky state at once: blackout on, strobe and scan off, buttons released. */
+    panic: () =>
+      set((s) => ({
+        blackout: true,
+        manualStrobe: false,
+        scan: { ...s.scan, active: false },
+        sensors: s.sensors.map((x) => (x.kind === 'gpio' ? { ...x, sim: { ...x.sim, manual: { ...x.sim.manual, pressed: 0 } } } : x)),
+      })),
+
+    newProject: () =>
+      set({
+        ...defaultProject(),
+        projectName: 'Untitled',
+        projectPath: null,
+        dirty: false,
+        selectedStripId: null,
+        selectedSensorId: null,
+        selectedRouteId: null,
+        sensorValues: {},
+      }),
+    loadProject: (data: ProjectData, name: string, path: string | null) =>
+      set({
+        ...data,
+        projectName: name,
+        projectPath: path,
+        dirty: false,
+        selectedStripId: null,
+        selectedSensorId: null,
+        selectedRouteId: null,
+        sensorValues: {},
+      }),
+    markSaved: (name: string, path: string | null) => set({ projectName: name, projectPath: path, dirty: false }),
+    setHealth: (id: string, health: DeviceHealth) => set((s) => ({ health: { ...s.health, [id]: health } })),
+    notify: (text: string, tone: Notice['tone'] = 'info') => set({ notice: { id: Date.now(), text, tone } }),
+    dismissNotice: () => set({ notice: null }),
     toggle: (key: 'showRoom' | 'showSphere' | 'ddpOutput') => set((s) => ({ [key]: !s[key] })),
     setScan: (scan: Partial<ScanState>) => set((s) => ({ scan: { ...s.scan, ...scan } })),
 
