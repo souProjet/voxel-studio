@@ -95,7 +95,7 @@ function NodeGraph({
             <path d={d} stroke="transparent" strokeWidth={12} fill="none" />
             <path d={d} stroke={c} strokeOpacity={sel ? 0.9 : 0.35} strokeWidth={sel ? 2 : 1.25} fill="none" />
             <path d={d} stroke={c} strokeOpacity={0.25 + live * 0.75} strokeWidth={1.5} fill="none" strokeDasharray="3 9" className="flow" />
-            <text x={mx} y={(y1 + y2) / 2 - 5} textAnchor="middle" fontSize={9} fontFamily="JetBrains Mono" fill={sel ? c : '#71717a'}>
+            <text x={x2 - 10} y={y2 - 6} textAnchor="end" fontSize={9} fontFamily="JetBrains Mono" fill={sel ? c : '#71717a'}>
               {r.amount >= 0 ? '+' : ''}
               {r.amount.toFixed(2)} {r.curve.toUpperCase()}
             </text>
