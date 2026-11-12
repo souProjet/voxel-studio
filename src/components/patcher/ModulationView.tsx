@@ -1,171 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Cable, Piano, Plus, RadioReceiver, SlidersHorizontal, SlidersVertical, Spline, Trash, TrendingUp, Waves, Workflow, type LucideIcon } from 'lucide-react';
-import type { ChannelKey, CurveType, Generator, GeneratorKind, LfoShape, ModTarget, ModulationRoute, SensorChannel, SensorNode } from '../../types/voxel';
+import { Cable, ChevronDown, Plus, SlidersHorizontal, Spline, Trash, Workflow } from 'lucide-react';
+import type { CurveType, Generator, LfoShape, ModulationRoute } from '../../types/voxel';
 import { useVoxel, useVoxelActions } from '../../state/useVoxelStore';
 import { useDeleteCommands } from '../../state/useDeleteCommands';
-import { CURVES, KIND_META, TARGET_META } from '../../services/catalog';
-import { clamp, routeOutput, routeTransfer, type ChannelValues } from '../../services/shaderMath';
-import { sensorIdOf } from '../../services/sensors';
+import { CURVES, TARGET_META } from '../../services/catalog';
+import { clamp, routeOutput, routeTransfer } from '../../services/shaderMath';
 import { GENERATOR_META, LFO_SHAPES, modChannels } from '../../services/generators';
 import { inputs, learnInput, OSC_PORT } from '../../services/inputs';
 import { bridgeMode } from '../../services/tauriBridge';
 import { ScrubInput } from '../ui/ScrubInput';
 import { Field, IconButton, SectionHeader, Segmented, Select, SliderBar, TextInput, Toggle } from '../ui/primitives';
 import { t } from '../../i18n';
-
-const TARGETS = Object.keys(TARGET_META) as ModTarget[];
-
-/** Everything the patcher needs to resolve a channel key to a label, a color and a value. */
-interface Patch {
-  channels: SensorChannel[];
-  byKey: Map<ChannelKey, SensorChannel>;
-  sensors: Map<string, SensorNode>;
-  gens: Map<string, Generator>;
-  values: ChannelValues;
-}
-
-const colorOf = (p: Patch, key: ChannelKey) => {
-  const sensor = p.sensors.get(sensorIdOf(key));
-  if (sensor) return KIND_META[sensor.kind].color;
-  const gen = p.gens.get(sensorIdOf(key));
-  return gen ? GENERATOR_META[gen.kind].color : '#52525b';
-};
-const labelOf = (p: Patch, key: ChannelKey) => {
-  const c = p.byKey.get(key);
-  const sensor = p.sensors.get(sensorIdOf(key));
-  if (c && sensor) return `${sensor.name} · ${t(c.label)}`;
-  const gen = p.gens.get(sensorIdOf(key));
-  return gen ? gen.name : t('Missing channel');
-};
-/** Sensor channel labels are catalog text; generator channels carry the user's name. */
-const chLabel = (p: Patch, ch: SensorChannel) => (p.sensors.has(ch.sensorId) ? t(ch.label) : ch.label);
-const ownerOf = (p: Patch, ch: SensorChannel) => p.sensors.get(ch.sensorId)?.name ?? t(GENERATOR_META[p.gens.get(ch.sensorId)?.kind ?? 'macro'].label);
-
-const G = { w: 820, nodeW: 196, nodeH: 40, srcX: 24, tgtX: 600, top: 18, gap: 50 };
-const nodeY = (i: number) => G.top + i * G.gap;
-
-function NodeGraph({
-  routes,
-  patch,
-  selectedId,
-  onSelect,
-  onConnect,
-}: {
-  routes: ModulationRoute[];
-  patch: Patch;
-  selectedId: string | null;
-  onSelect: (id: string) => void;
-  onConnect: (s: ChannelKey, t: ModTarget) => void;
-}) {
-  const [pending, setPending] = useState<ChannelKey | null>(null);
-  const { channels, values } = patch;
-  const targetSums = useMemo(() => {
-    const sums: Partial<Record<ModTarget, number>> = {};
-    for (const r of routes) sums[r.target] = (sums[r.target] ?? 0) + routeOutput(r, values);
-    return sums;
-  }, [routes, values]);
-  const height = Math.max(channels.length, TARGETS.length) * G.gap + G.top + 24;
-  const keys = channels.map((c) => c.key);
-
-  return (
-    <svg viewBox={`0 0 ${G.w} ${height}`} className="h-full w-full" preserveAspectRatio="xMidYMin meet">
-      <defs>
-        <pattern id="dots" width="16" height="16" patternUnits="userSpaceOnUse">
-          <circle cx="1" cy="1" r="0.8" fill="#1f1f23" />
-        </pattern>
-        <style>{`@keyframes flow { to { stroke-dashoffset: -24; } } .flow { animation: flow 0.8s linear infinite; }`}</style>
-      </defs>
-      <rect width={G.w} height={height} fill="url(#dots)" />
-
-      {routes.map((r) => {
-        const si = keys.indexOf(r.source);
-        const ti = TARGETS.indexOf(r.target);
-        if (si < 0) return null;
-        const x1 = G.srcX + G.nodeW,
-          y1 = nodeY(si) + G.nodeH / 2;
-        const x2 = G.tgtX,
-          y2 = nodeY(ti) + G.nodeH / 2;
-        const mx = (x1 + x2) / 2;
-        const d = `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`;
-        const c = colorOf(patch, r.source);
-        const sel = r.id === selectedId;
-        const live = Math.abs(routeOutput(r, values));
-        return (
-          <g key={r.id} className="cursor-pointer" onClick={() => onSelect(r.id)} opacity={r.enabled ? 1 : 0.25}>
-            <path d={d} stroke="transparent" strokeWidth={12} fill="none" />
-            <path d={d} stroke={c} strokeOpacity={sel ? 0.9 : 0.35} strokeWidth={sel ? 2 : 1.25} fill="none" />
-            <path d={d} stroke={c} strokeOpacity={0.25 + live * 0.75} strokeWidth={1.5} fill="none" strokeDasharray="3 9" className="flow" />
-            <text x={x2 - 10} y={y2 - 6} textAnchor="end" fontSize={9} fontFamily="JetBrains Mono" fill={sel ? c : '#71717a'}>
-              {r.amount >= 0 ? '+' : ''}
-              {r.amount.toFixed(2)} {r.curve.toUpperCase()}
-            </text>
-          </g>
-        );
-      })}
-
-      {channels.map((ch, i) => {
-        const s = ch.key;
-        const y = nodeY(i);
-        const c = colorOf(patch, s);
-        const v = clamp(values[s] ?? 0);
-        const armed = pending === s;
-        return (
-          <g key={s} className="cursor-pointer" onClick={() => setPending(armed ? null : s)}>
-            <rect x={G.srcX} y={y} width={G.nodeW} height={G.nodeH} rx={5} fill="#16161a" stroke={armed ? c : '#27272a'} />
-            <rect x={G.srcX} y={y + 6} width={2} height={G.nodeH - 12} fill={c} />
-            <text x={G.srcX + 12} y={y + 16} fontSize={11} fill="#e4e4e7" fontFamily="Inter">
-              {chLabel(patch, ch)}
-            </text>
-            <text x={G.srcX + 12} y={y + 30} fontSize={9} fill="#71717a" fontFamily="JetBrains Mono">
-              {ownerOf(patch, ch).slice(0, 22)}
-            </text>
-            <rect x={G.srcX + G.nodeW - 52} y={y + 26} width={40} height={3} rx={1.5} fill="#27272a" />
-            <rect x={G.srcX + G.nodeW - 52} y={y + 26} width={40 * v} height={3} rx={1.5} fill={c} />
-            <text x={G.srcX + G.nodeW - 12} y={y + 17} fontSize={9} textAnchor="end" fill={c} fontFamily="JetBrains Mono">
-              {v.toFixed(2)}
-            </text>
-            <circle cx={G.srcX + G.nodeW} cy={y + G.nodeH / 2} r={4} fill="#09090b" stroke={c} strokeWidth={1.5} />
-          </g>
-        );
-      })}
-
-      {TARGETS.map((tg, i) => {
-        const y = nodeY(i);
-        const sum = targetSums[tg] ?? 0;
-        const meta = TARGET_META[tg];
-        return (
-          <g
-            key={tg}
-            className={pending ? 'cursor-crosshair' : ''}
-            onClick={() => {
-              if (!pending) return;
-              onConnect(pending, tg);
-              setPending(null);
-            }}
-          >
-            <rect x={G.tgtX} y={y} width={G.nodeW} height={G.nodeH} rx={5} fill="#16161a" stroke={pending ? '#3f3f46' : '#27272a'} strokeDasharray={pending ? '3 3' : undefined} />
-            <circle cx={G.tgtX} cy={y + G.nodeH / 2} r={4} fill="#09090b" stroke="#06b6d4" strokeWidth={1.5} />
-            <text x={G.tgtX + 12} y={y + 16} fontSize={11} fill="#e4e4e7" fontFamily="Inter">
-              {t(meta.label)}
-            </text>
-            <text x={G.tgtX + 12} y={y + 30} fontSize={9} fill={meta.spatial ? '#06b6d4' : '#71717a'} fontFamily="JetBrains Mono">
-              {meta.spatial ? `3D · ${t(meta.detail)}` : t(meta.detail)}
-            </text>
-            <text x={G.tgtX + G.nodeW - 10} y={y + 17} fontSize={9} textAnchor="end" fill={Math.abs(sum) > 0.005 ? '#d946ef' : '#52525b'} fontFamily="JetBrains Mono">
-              {sum >= 0 ? '+' : ''}
-              {(sum * meta.range).toFixed(2)}
-              {meta.unit && meta.unit !== '%' ? meta.unit : ''}
-            </text>
-          </g>
-        );
-      })}
-
-      <text x={G.w / 2} y={height - 6} textAnchor="middle" fontSize={9} fill="#52525b" fontFamily="Inter">
-        {pending ? t('Pick a target for {source}', { source: labelOf(patch, pending) }) : t('Click a source, then a target to patch a new route')}
-      </text>
-    </svg>
-  );
-}
+import { NodeEditor } from './NodeEditor';
+import { colorOf, GEN_ICON, labelOf, TARGETS, type Patch } from './patchModel';
 
 const FORMULA: Record<CurveType, string> = {
   linear: 'y = x',
@@ -283,7 +130,6 @@ function RouteSettings({ route, patch }: { route: ModulationRoute; patch: Patch 
   );
 }
 
-const GEN_ICON: Record<GeneratorKind, LucideIcon> = { lfo: Waves, envelope: TrendingUp, macro: SlidersVertical, osc: RadioReceiver, midi: Piano };
 const SHAPE_LABEL: Record<LfoShape, string> = { sine: 'SIN', triangle: 'TRI', saw: 'SAW', square: 'SQR', random: 'RND' };
 
 function GeneratorCard({ g, patch }: { g: Generator; patch: Patch }) {
@@ -407,39 +253,6 @@ function GeneratorCard({ g, patch }: { g: Generator; patch: Patch }) {
   );
 }
 
-function GeneratorPanel({ patch }: { patch: Patch }) {
-  const generators = useVoxel((s) => s.generators);
-  const { addGenerator } = useVoxelActions();
-  return (
-    <>
-      <SectionHeader
-        title={t('Generators')}
-        icon={Waves}
-        right={
-          <>
-            {(Object.keys(GENERATOR_META) as GeneratorKind[]).map((k) => (
-              <IconButton
-                key={k}
-                icon={GEN_ICON[k]}
-                title={t('Add {name}: {description}', { name: t(GENERATOR_META[k].label), description: t(GENERATOR_META[k].description) })}
-                onClick={() => addGenerator(k)}
-              />
-            ))}
-          </>
-        }
-      />
-      {generators.length === 0 && (
-        <p className="px-3 py-2 text-[11px] leading-snug text-zinc-600">
-          {t('LFOs, envelopes, macros and OSC inputs appear as sources in the graph and the matrix. Add one with the buttons above.')}
-        </p>
-      )}
-      {generators.map((g) => (
-        <GeneratorCard key={g.id} g={g} patch={patch} />
-      ))}
-    </>
-  );
-}
-
 function MatrixRow({ route, patch, selected }: { route: ModulationRoute; patch: Patch; selected: boolean }) {
   const { updateRoute, removeRoute, selectRoute } = useVoxelActions();
   const set = (p: Partial<ModulationRoute>) => updateRoute(route.id, p);
@@ -503,7 +316,18 @@ export function ModulationView() {
   const patch: Patch = { ...structure, values };
   const selectedId = useVoxel((s) => s.selectedRouteId);
   const { selectRoute, addRoute } = useVoxelActions();
-  const selected = routes.find((r) => r.id === selectedId) ?? routes[0] ?? null;
+  const [nodeId, setNodeId] = useState<string | null>(null);
+  const [matrixOpen, setMatrixOpen] = useState(true);
+  const selected = routes.find((r) => r.id === selectedId) ?? null;
+  const selectedGen = !selected && nodeId ? (generators.find((g) => g.id === nodeId) ?? null) : null;
+  const pickRoute = (id: string | null) => {
+    selectRoute(id);
+    if (id) setNodeId(null);
+  };
+  const pickNode = (id: string | null) => {
+    setNodeId(id);
+    if (id) selectRoute(null);
+  };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -514,59 +338,71 @@ export function ModulationView() {
             icon={Workflow}
             right={<span className="font-mono text-[10px] text-zinc-500">{routes.length === 1 ? t('1 route') : t('{n} routes', { n: routes.length })}</span>}
           />
-          <div className="min-h-0 flex-1 p-3">
-            <NodeGraph
-              routes={routes}
-              patch={patch}
-              selectedId={selected?.id ?? null}
-              onSelect={selectRoute}
-              onConnect={(source, target) => addRoute({ source, target, curve: 'linear', amount: 0.5 })}
-            />
+          <div className="min-h-0 flex-1">
+            <NodeEditor patch={patch} selectedRouteId={selected?.id ?? null} selectedNodeId={selected ? null : nodeId} onSelectRoute={pickRoute} onSelectNode={pickNode} />
           </div>
         </section>
         <aside className="flex w-[360px] shrink-0 flex-col overflow-y-auto bg-panel">
-          <SectionHeader title={t('Response Curve')} icon={Spline} />
-          <div className="p-3">{selected ? <ResponseCurve route={selected} patch={patch} /> : <p className="text-[11px] text-zinc-600">{t('No route selected.')}</p>}</div>
-          {selected && (
+          {selected ? (
             <>
+              <SectionHeader title={t('Response Curve')} icon={Spline} />
+              <div className="p-3">
+                <ResponseCurve route={selected} patch={patch} />
+              </div>
               <SectionHeader title={t('Route')} icon={SlidersHorizontal} />
               <div className="pt-2">
                 <RouteSettings route={selected} patch={patch} />
               </div>
             </>
+          ) : selectedGen ? (
+            <>
+              <SectionHeader title={t(GENERATOR_META[selectedGen.kind].label)} icon={GEN_ICON[selectedGen.kind]} accent={GENERATOR_META[selectedGen.kind].color} />
+              <GeneratorCard key={selectedGen.id} g={selectedGen} patch={patch} />
+            </>
+          ) : (
+            <>
+              <SectionHeader title={t('Inspector')} icon={SlidersHorizontal} />
+              <p className="px-3 py-3 text-[11px] leading-relaxed text-zinc-500">{t('Select a wire to shape its response, or a generator to edit it.')}</p>
+            </>
           )}
-          <GeneratorPanel patch={patch} />
         </aside>
       </div>
-      <section className="flex max-h-[42%] shrink-0 flex-col border-t border-line bg-panel">
+      <section className={`flex shrink-0 flex-col border-t border-line bg-panel ${matrixOpen ? 'max-h-[34%]' : ''}`}>
         <SectionHeader
           title={t('Modulation Matrix')}
           icon={Cable}
           right={
-            <button
-              type="button"
-              onClick={() => addRoute()}
-              className="flex h-6 items-center gap-1 rounded-[5px] border border-line px-2 text-[10px] text-zinc-300 hover:border-line-hi"
-            >
-              <Plus size={11} /> {t('Route')}
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => addRoute()}
+                className="flex h-6 items-center gap-1 rounded-[5px] border border-line px-2 text-[10px] text-zinc-300 hover:border-line-hi"
+              >
+                <Plus size={11} /> {t('Route')}
+              </button>
+              <IconButton icon={ChevronDown} title={matrixOpen ? t('Hide the matrix') : t('Show the matrix')} onClick={() => setMatrixOpen(!matrixOpen)} />
+            </>
           }
         />
-        <div className="grid grid-cols-[28px_minmax(130px,1fr)_minmax(130px,1fr)_220px_minmax(200px,1.4fr)_64px_56px_28px] gap-1.5 border-b border-line px-3 py-1.5 text-[10px] uppercase tracking-wider text-zinc-500">
-          <span>{t('On')}</span>
-          <span>{t('Source')}</span>
-          <span>{t('Destination')}</span>
-          <span>{t('Curve')}</span>
-          <span>{t('Amount −1 … +1')}</span>
-          <span>{t('Mode')}</span>
-          <span className="text-right">{t('Out')}</span>
-          <span />
-        </div>
-        <div className="min-h-0 overflow-y-auto">
-          {routes.map((r) => (
-            <MatrixRow key={r.id} route={r} patch={patch} selected={r.id === selected?.id} />
-          ))}
-        </div>
+        {matrixOpen && (
+          <>
+            <div className="grid grid-cols-[28px_minmax(130px,1fr)_minmax(130px,1fr)_220px_minmax(200px,1.4fr)_64px_56px_28px] gap-1.5 border-b border-line px-3 py-1.5 text-[10px] uppercase tracking-wider text-zinc-500">
+              <span>{t('On')}</span>
+              <span>{t('Source')}</span>
+              <span>{t('Destination')}</span>
+              <span>{t('Curve')}</span>
+              <span>{t('Amount −1 … +1')}</span>
+              <span>{t('Mode')}</span>
+              <span className="text-right">{t('Out')}</span>
+              <span />
+            </div>
+            <div className="min-h-0 overflow-y-auto">
+              {routes.map((r) => (
+                <MatrixRow key={r.id} route={r} patch={patch} selected={r.id === selected?.id} />
+              ))}
+            </div>
+          </>
+        )}
       </section>
     </div>
   );

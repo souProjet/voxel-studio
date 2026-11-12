@@ -119,7 +119,7 @@ export function TopHeader() {
           <span className="rounded-[1px] bg-zinc-700" />
           <span className="rounded-[1px] bg-audio" />
         </div>
-        <span className="hidden whitespace-nowrap font-mono text-[11px] font-semibold tracking-[0.18em] text-zinc-100 2xl:inline">
+        <span className="hidden whitespace-nowrap font-mono text-[11px] font-semibold tracking-[0.18em] text-zinc-100 min-[1800px]:inline">
           VOXEL <span className="text-zinc-600">//</span> STUDIO
         </span>
       </div>
@@ -184,10 +184,10 @@ export function TopHeader() {
           <span className="text-[10px] uppercase tracking-wider text-zinc-500">{t('Voxels')}</span>
           <span className="tabular font-mono text-[11px] text-spatial">{stats.activeVoxels}</span>
         </div>
-        <div className="hidden 2xl:block">
+        <div className="hidden min-[1800px]:block">
           <AudioMeter />
         </div>
-        <div className="hidden items-baseline gap-1 2xl:flex">
+        <div className="hidden items-baseline gap-1 min-[1800px]:flex">
           <span className="text-[10px] uppercase tracking-wider text-zinc-500">GPS</span>
           <span className="tabular font-mono text-[11px] text-gps">{gps.toFixed(0).padStart(3, '0')}</span>
           <span className="font-mono text-[10px] text-zinc-500">km/h</span>

@@ -63,3 +63,50 @@ select:focus,
 button:focus-visible {
   outline: none;
 }
+
+/* Modulation node editor */
+@keyframes wire-flow {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+@keyframes wire-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes node-in {
+  from {
+    opacity: 0;
+    scale: 0.94;
+  }
+}
+@keyframes port-pulse {
+  50% {
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--port) 30%, transparent);
+  }
+}
+.wire-flow {
+  animation: wire-flow 0.7s linear infinite;
+}
+.wire-draw {
+  stroke-dasharray: 1;
+  animation: wire-draw 0.45s ease-out both;
+}
+.node-in {
+  animation: node-in 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+}
+.port-snap {
+  animation: port-pulse 0.8s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .wire-flow,
+  .wire-draw,
+  .node-in,
+  .port-snap {
+    animation: none;
+  }
+}

@@ -9,7 +9,9 @@ import type {
   GeneratorKind,
   LEDStrip,
   ModulationRoute,
+  NodePos,
   Notice,
+  PatchLayout,
   ScanState,
   SensorKind,
   SensorNode,
@@ -33,6 +35,7 @@ export interface VoxelState {
   routes: ModulationRoute[];
   sensors: SensorNode[];
   generators: Generator[];
+  patchLayout: PatchLayout;
   /** Normalized channel values (0..1), published by the engine at the sensor tick rate. */
   sensorValues: Record<string, number>;
   shader: ShaderId;
@@ -304,6 +307,7 @@ export function defaultProject(): ProjectData {
     routes: INITIAL_ROUTES,
     sensors: INITIAL_SENSORS,
     generators: [],
+    patchLayout: {},
     shader: 'spherical_wave',
     params: { origin: [0, 1.2, 0], radius: 1.4, speed: 1, hueShift: 0, masterBrightness: 0.8, ...EFFECT_DEFAULTS },
     showRoom: true,
@@ -672,18 +676,27 @@ function createActions(store: VoxelStore) {
         ...dropSource(s, (key) => key === channelKey(sensorId, bandId)),
       })),
 
-    addGenerator: (kind: GeneratorKind) =>
+    /** Adds a generator, optionally at a position in the modulation editor. Returns its id. */
+    addGenerator: (kind: GeneratorKind, at?: NodePos) => {
+      const id = uid(kind);
       set((s) => {
         const n = s.generators.filter((g) => g.kind === kind).length + 1;
-        return { generators: [...s.generators, normalizeGenerator({ id: uid(kind), name: `${t(GENERATOR_META[kind].label)} ${n}`, kind })] };
-      }),
+        return {
+          generators: [...s.generators, normalizeGenerator({ id, name: `${t(GENERATOR_META[kind].label)} ${n}`, kind })],
+          ...(at && { patchLayout: { ...s.patchLayout, [id]: at } }),
+        };
+      });
+      return id;
+    },
+    moveNodes: (positions: PatchLayout) => set((s) => ({ patchLayout: { ...s.patchLayout, ...positions } })),
     updateGenerator: (id: string, patch: Partial<Generator>) => set((s) => ({ generators: s.generators.map((g) => (g.id === id ? { ...g, ...patch } : g)) })),
     /** Live knob moves: no undo entry per step. */
     setMacro: (id: string, value: number) => set((s) => ({ generators: s.generators.map((g) => (g.id === id ? { ...g, value } : g)) }), { transient: true }),
     removeGenerator: (id: string) =>
       set((s) => {
+        const { [id]: _gone, ...patchLayout } = s.patchLayout;
         const rest = { ...s, generators: s.generators.filter((g) => g.id !== id) };
-        return dropSource(rest, (key) => sensorIdOf(key) === id);
+        return { patchLayout, ...dropSource(rest, (key) => sensorIdOf(key) === id) };
       }),
 
     selectRoute: (selectedRouteId: string | null) => set({ selectedRouteId }),

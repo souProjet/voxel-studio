@@ -65,6 +65,13 @@ export interface ESP32Device {
 
 export type ModTarget = 'sphere_radius' | 'shader_speed' | 'color_shift' | 'strobe_override' | 'master_brightness' | 'origin_y' | 'local_intensity' | 'local_wave';
 
+/** Position of a node in the modulation editor, in graph units. Keyed by sensor or generator id. */
+export interface NodePos {
+  x: number;
+  y: number;
+}
+export type PatchLayout = Record<string, NodePos>;
+
 export type CurveType = 'linear' | 'exp' | 'scurve' | 'step';
 
 export interface ModulationRoute {

@@ -2,8 +2,19 @@
 const patch: Record<string, string> = {
   // Modulation: signal graph and response curve
   'Missing channel': 'Canal manquant',
-  'Pick a target for {source}': 'Choisir une destination pour {source}',
-  'Click a source, then a target to patch a new route': 'Cliquer une source, puis une destination pour créer une route',
+  'Not learned': 'Non appris',
+  'Drag up or down to set the amount, double-click to mute': 'Glisser vers le haut ou le bas pour régler la quantité, double-clic pour couper',
+  'Zoom out': 'Zoom arrière',
+  'Zoom in': 'Zoom avant',
+  'Fit the graph': 'Cadrer le graphe',
+  'Drop on an input to move the wire, anywhere else to disconnect it': 'Lâcher sur une entrée pour déplacer le câble, ailleurs pour le débrancher',
+  'Drop on an effect input, an envelope trigger or a route chip': 'Lâcher sur une entrée de l’effet, un déclencheur d’enveloppe ou une pastille de route',
+  'Drag from an output to an input to connect · Drag a chip up or down for the amount · Scroll to pan, pinch or Cmd+scroll to zoom · Delete removes the selection':
+    'Glisser d’une sortie vers une entrée pour connecter · Glisser une pastille vers le haut ou le bas pour la quantité · Défiler pour se déplacer, pincer ou Cmd+défiler pour zoomer · Suppr efface la sélection',
+  Inspector: 'Inspecteur',
+  'Select a wire to shape its response, or a generator to edit it.': 'Sélectionner un câble pour régler sa réponse, ou un générateur pour le modifier.',
+  'Hide the matrix': 'Masquer la matrice',
+  'Show the matrix': 'Afficher la matrice',
   'IN 1.0': 'ENTRÉE 1.0',
   'IN · {source}': 'ENTRÉE · {source}',
   'OUT · {target}': 'SORTIE · {target}',
@@ -13,7 +24,6 @@ const patch: Record<string, string> = {
   '1 route': '1 route',
   '{n} routes': '{n} routes',
   'Response Curve': 'Courbe de réponse',
-  'No route selected.': 'Aucune route sélectionnée.',
   Route: 'Route',
 
   // Modulation: route settings
@@ -25,10 +35,7 @@ const patch: Record<string, string> = {
     'La route ne réagit qu’entre MIN et MAX de sa source. Le lissage adoucit la sortie ; « Piloté par » module la profondeur avec un autre canal (une macro, un LFO, un capteur).',
 
   // Modulation: generators
-  Generators: 'Générateurs',
   'Add {name}: {description}': 'Ajouter {name} : {description}',
-  'LFOs, envelopes, macros and OSC inputs appear as sources in the graph and the matrix. Add one with the buttons above.':
-    'Les LFO, enveloppes, macros et entrées OSC apparaissent comme sources dans le graphe et la matrice. En ajouter avec les boutons ci-dessus.',
   'Enable generator': 'Activer le générateur',
   'Delete generator and its routes': 'Supprimer le générateur et ses routes',
   Period: 'Période',

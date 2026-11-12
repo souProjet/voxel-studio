@@ -1,4 +1,4 @@
-import type { EffectParams, ESP32Device, Generator, LEDStrip, ModulationRoute, SensorNode, ShaderId } from '../types/voxel';
+import type { EffectParams, ESP32Device, Generator, LEDStrip, ModulationRoute, PatchLayout, SensorNode, ShaderId } from '../types/voxel';
 import { EFFECT_DEFAULTS, SHADER_PRESETS } from './catalog';
 import { normalizeStrip } from './geometry';
 import { normalizeGenerator, ROUTE_DEFAULTS } from './generators';
@@ -17,6 +17,8 @@ export interface ProjectData {
   routes: ModulationRoute[];
   sensors: SensorNode[];
   generators: Generator[];
+  /** Node positions in the modulation editor. */
+  patchLayout: PatchLayout;
   shader: ShaderId;
   params: EffectParams;
   showRoom: boolean;
@@ -29,7 +31,7 @@ interface ProjectFile extends ProjectData {
   savedAt: string;
 }
 
-export const PROJECT_KEYS: (keyof ProjectData)[] = ['strips', 'devices', 'routes', 'sensors', 'generators', 'shader', 'params', 'showRoom', 'showSphere'];
+export const PROJECT_KEYS: (keyof ProjectData)[] = ['strips', 'devices', 'routes', 'sensors', 'generators', 'patchLayout', 'shader', 'params', 'showRoom', 'showSphere'];
 
 export function pickProject(source: ProjectData): ProjectData {
   return {
@@ -38,6 +40,7 @@ export function pickProject(source: ProjectData): ProjectData {
     routes: source.routes,
     sensors: source.sensors,
     generators: source.generators,
+    patchLayout: source.patchLayout,
     shader: source.shader,
     params: source.params,
     showRoom: source.showRoom,
@@ -52,6 +55,16 @@ export function serializeProject(data: ProjectData): string {
 
 const isArray = (v: unknown): v is unknown[] => Array.isArray(v);
 const isVec3 = (v: unknown) => isArray(v) && v.length === 3 && v.every((n) => typeof n === 'number' && Number.isFinite(n));
+
+/** Keeps only well-formed node positions; a broken layout falls back to the automatic one. */
+function parseLayout(v: unknown): PatchLayout {
+  if (!v || typeof v !== 'object' || isArray(v)) return {};
+  const out: PatchLayout = {};
+  for (const [id, p] of Object.entries(v as Record<string, { x?: unknown; y?: unknown }>)) {
+    if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) out[id] = { x: p.x as number, y: p.y as number };
+  }
+  return out;
+}
 
 /** Parses and validates a project file. Throws a readable Error when the file cannot be used. */
 export function parseProject(text: string): ProjectData {
@@ -92,6 +105,7 @@ export function parseProject(text: string): ProjectData {
     strips: (f.strips as LEDStrip[]).map(normalizeStrip),
     routes: (f.routes as ModulationRoute[]).map((r) => ({ ...ROUTE_DEFAULTS, ...r })),
     generators: generators.map(normalizeGenerator),
+    patchLayout: parseLayout(f.patchLayout),
   });
 }
 

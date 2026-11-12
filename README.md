@@ -32,9 +32,11 @@ Build the room from lines, helices, polylines, arcs, serpentine matrices or impo
 
 ### Modulation
 
-![Modulation view with the signal graph, the response curve and the modulation matrix](docs/media/modulation.png)
+![Modulation node editor with sensor, LFO, envelope and macro nodes wired to the effect node](docs/media/modulation.png)
 
-A patch graph from sources to effect parameters. Each route has a curve (linear, exponential, S-curve, step), an amount, an input range, smoothing, and an optional second source that scales its depth. Spatial targets (`Local Intensity`, `Local Wave`) act around the sensor's position in the room instead of on the whole scene.
+A node editor between sources and the effect. Drag nodes around, drag from an output port to an input to patch a route, grab a connected input to move the wire or drop it anywhere to unplug it. Each wire carries a chip: drag it up or down to set the amount, double-click it to mute. Dropping a wire on a chip makes that source scale the route's depth, and envelopes take a trigger input. Wires animate with the live signal, generator nodes show their output as a scope, and the layout is saved with the project. Scroll to pan, pinch or Cmd+scroll to zoom.
+
+Select a wire to edit its curve (linear, exponential, S-curve, step), input range and smoothing in the inspector, or use the matrix below the graph. Spatial targets (`Local Intensity`, `Local Wave`) act around the sensor's position in the room instead of on the whole scene.
 
 Sources:
 
