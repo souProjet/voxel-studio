@@ -3971,6 +3971,7 @@ name = "voxel-studio"
 version = "0.1.0"
 dependencies = [
  "midir",
+ "objc2-foundation",
  "serde",
  "tauri",
  "tauri-build",

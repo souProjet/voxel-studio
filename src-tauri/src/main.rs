@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::ipc::{InvokeBody, Request};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_dialog::DialogExt;
 
 /// Lazily bound UDP socket shared by all `send_ddp_packet` calls.
@@ -233,9 +233,52 @@ fn inputs_poll(state: State<'_, inputs::Inputs>) -> inputs::InputsSnapshot {
     state.poll()
 }
 
+/// Opts the process out of App Nap, which otherwise throttles the webview's timers to a few hertz
+/// once the window is hidden or occluded and starves the 40 Hz DDP stream. The returned token must
+/// stay alive for as long as output should keep its rate.
+#[cfg(target_os = "macos")]
+fn keep_output_rate() -> impl Sized {
+    use objc2_foundation::{NSActivityOptions, NSProcessInfo, NSString};
+    NSProcessInfo::processInfo().beginActivityWithOptions_reason(
+        NSActivityOptions::UserInitiated | NSActivityOptions::LatencyCritical,
+        &NSString::from_str("Streaming LED frames over DDP"),
+    )
+}
+
+#[cfg(not(target_os = "macos"))]
+fn keep_output_rate() {}
+
+/// Tick period of the native output clock: several ticks per DDP frame, so the engine's fixed-rate
+/// gate holds 40 Hz despite delivery jitter.
+const OUTPUT_CLOCK_PERIOD: Duration = Duration::from_millis(5);
+
+/// Paces the engine while the window is hidden. WebKit throttles page and worker timers to a few
+/// hertz shortly after the window is hidden or minimized, so the webview cannot keep 40 Hz on its
+/// own; an event pushed from this thread runs JavaScript without any webview timer.
+fn output_clock(app: AppHandle) {
+    let mut next = Instant::now();
+    loop {
+        next += OUTPUT_CLOCK_PERIOD;
+        let now = Instant::now();
+        match next.checked_duration_since(now) {
+            Some(wait) => std::thread::sleep(wait),
+            None => next = now, // fell behind (sleep, debugger): resync instead of bursting
+        }
+        if app.emit("output-clock", ()).is_err() {
+            return;
+        }
+    }
+}
+
 fn main() {
+    let _activity = keep_output_rate();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            let handle = app.handle().clone();
+            std::thread::Builder::new().name("output-clock".into()).spawn(move || output_clock(handle))?;
+            Ok(())
+        })
         .manage(DdpState::default())
         .manage(ProjectFile::default())
         .manage(inputs::Inputs::default())

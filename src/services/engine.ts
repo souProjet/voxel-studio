@@ -8,7 +8,7 @@ import { hexToRgb, layerTarget, OPACITY_KEY, parseParams } from './layers';
 import { GeneratorBank } from './generators';
 import { inputs, syncInputs } from './inputs';
 import { SensorPipeline, sensorIdOf } from './sensors';
-import { bridgeMode, encodeDdpPackets, probeDevice, sendDdpFrame } from './tauriBridge';
+import { bridgeMode, encodeDdpPackets, listenOutputClock, probeDevice, sendDdpFrame } from './tauriBridge';
 
 export interface DeviceFrame {
   rgb: Uint8Array;
@@ -44,12 +44,29 @@ export const runtime = {
 const SENSOR_HZ = 20;
 const PROBE_INTERVAL_MS = 3000;
 /**
- * Output clock. requestAnimationFrame stops when the window is hidden or minimized, which
- * would freeze the LEDs mid-show. A dedicated worker posts ticks at the DDP rate (worker
- * timers are not throttled like page timers); a tick runs a frame only when rAF has not.
+ * Output clock. requestAnimationFrame stops when the window is hidden or minimized, which would
+ * freeze the LEDs mid-show, so a second clock ticks every few milliseconds and runs a frame
+ * whenever rAF has stalled. In the desktop app that clock is a native thread: WebKit throttles
+ * page and worker timers to a few hertz shortly after the window is hidden. In the browser it is
+ * a worker. Ticks are faster than the output rate and fixed-rate gates decide when to send, so
+ * timer alignment (a 25 ms interval actually fires every 32 ms) does not lower the rate.
  */
-const CLOCK_WORKER_SRC = `setInterval(() => postMessage(0), ${Math.round(1000 / DDP_SEND_HZ)});`;
+const CLOCK_WORKER_SRC = `setInterval(() => postMessage(0), 5);`;
 const RAF_STALL_MS = 60;
+
+/**
+ * Fixed-rate gate fed by an irregular clock: opens `hz` times per second on average, whatever the
+ * tick spacing, and resynchronizes instead of bursting after a stall longer than one period.
+ */
+export function rateGate(hz: number): (now: number) => boolean {
+  const period = 1000 / hz;
+  let next = -Infinity;
+  return (now) => {
+    if (now < next - 1) return false; // 1 ms of slack for ticks that land a hair early
+    next = now - next > period ? now + period : next + period;
+    return true;
+  };
+}
 /** Local wave ring: propagation speed (m/s) and gaussian width (m). */
 const WAVE_SPEED = 3.5;
 const WAVE_WIDTH = 0.15;
@@ -95,7 +112,7 @@ export function startEngine(store: VoxelStore): () => void {
   let rendererLayout = -1;
   let publishedErrors = '{}';
   const room: Vec3 = [ROOM.width, ROOM.height, ROOM.depth];
-  let lastSend = 0;
+  const ddpGate = rateGate(DDP_SEND_HZ);
   let lastStats = performance.now();
   let renderFrames = 0;
   let ddpFrames = 0;
@@ -335,9 +352,7 @@ export function startEngine(store: VoxelStore): () => void {
     }
 
     // 3. DDP output at a fixed rate, one frame per DDP device.
-    // Small tolerance so a clock tick arriving a few ms early does not skip a whole frame.
-    if (now - lastSend >= 1000 / DDP_SEND_HZ - 4) {
-      lastSend = now;
+    if (ddpGate(now)) {
       ddpFrames++;
       for (const d of s.devices) {
         if (d.protocol !== 'DDP') continue;
@@ -435,16 +450,13 @@ export function startEngine(store: VoxelStore): () => void {
   // Sensor tick: every source, simulated or real, goes through the same pipeline.
   const pipeline = new SensorPipeline();
   const sensorDt = 1 / SENSOR_HZ;
-  const ticksPerSensor = Math.max(1, Math.round(DDP_SEND_HZ / SENSOR_HZ));
+  const sensorGate = rateGate(SENSOR_HZ);
   let sensorT = 0;
-  let tick = 0;
 
-  const clockUrl = URL.createObjectURL(new Blob([CLOCK_WORKER_SRC], { type: 'text/javascript' }));
-  const clock = new Worker(clockUrl);
-  clock.onmessage = () => {
+  const onTick = () => {
     const now = performance.now();
     if (now - lastRafAt > RAF_STALL_MS) step(now);
-    if (++tick % ticksPerSensor !== 0) return;
+    if (!sensorGate(now)) return;
     sensorT += sensorDt;
     const st = store.getState();
     syncInputs(
@@ -473,14 +485,24 @@ export function startEngine(store: VoxelStore): () => void {
         .finally(() => probing.delete(d.id));
     }
   };
+  let stopClock = listenOutputClock(onTick);
+  if (!stopClock) {
+    const clockUrl = URL.createObjectURL(new Blob([CLOCK_WORKER_SRC], { type: 'text/javascript' }));
+    const clock = new Worker(clockUrl);
+    clock.onmessage = onTick;
+    stopClock = () => {
+      clock.terminate();
+      URL.revokeObjectURL(clockUrl);
+    };
+  }
+
   probeAll();
   const probeTimer = window.setInterval(probeAll, PROBE_INTERVAL_MS);
 
   return () => {
     cancelAnimationFrame(raf);
     renderer?.dispose();
-    clock.terminate();
-    URL.revokeObjectURL(clockUrl);
+    stopClock();
     window.clearInterval(probeTimer);
     pipeline.dispose();
   };

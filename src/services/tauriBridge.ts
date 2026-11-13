@@ -1,4 +1,5 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { t } from '../i18n';
 
 /**
@@ -242,6 +243,16 @@ export interface InputsSnapshot {
 }
 
 /** UDP listeners and MIDI ports live in Rust; the browser build cannot open sockets. */
+/**
+ * Subscribes to the native output clock (`output_clock` in main.rs), which keeps ticking while the
+ * window is hidden. Returns the unsubscribe function, or null in the browser, which has no native clock.
+ */
+export function listenOutputClock(onTick: () => void): (() => void) | null {
+  if (bridgeMode !== 'native') return null;
+  const off = listen('output-clock', onTick);
+  return () => void off.then((unlisten) => unlisten());
+}
+
 export function configureInputs(oscPort: number | null, wledSync: boolean, midi: boolean): Promise<InputsStatus> {
   if (bridgeMode !== 'native') {
     const unavailable = t('Needs the desktop app (browsers cannot listen on UDP).');
